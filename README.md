@@ -1,7 +1,7 @@
 # Distrothèque
 
-Catalogue de distributions Linux : recherche par nom, filtres par architecture
-et par source, fiches détaillées et liens ISO directs.
+Catalogue de distributions Linux, BSD et Unix : recherche par nom, filtres par
+architecture et par source, fiches détaillées et liens ISO directs.
 
 Le projet fonctionne sous **Linux** et se compose de deux parties :
 
@@ -77,14 +77,19 @@ php -S 127.0.0.1:8080 -t web/public web/public/router.php
 
 - **isoslinux.com** : catalogue principal (nom, version, architectures, rang de
   popularité, description, liens de téléchargement, prérequis) ;
-- **archiveos.org** : toutes les pages du catalogue, filtrées sur la catégorie
-  Linux, hors articles et actualités. Les fiches sans lien de téléchargement
-  sont écartées.
+- **archiveos.org** : toutes les pages du catalogue, filtrées sur les catégories
+  **Linux et BSD**, plus les fiches du tag **`unix`** (souvent classées
+  « Others »). Les articles et actualités sont écartés. Les fiches sans ISO sont
+  écartées, y compris les fiches Unix.
 
 Les deux sources sont fusionnées par **nom normalisé** (accents, casse,
 mots vides et numéros de version ignorés). En cas de doublon, les données
 isoslinux sont conservées et archiveos complète les champs manquants. Le champ
 `source` vaut alors `both` ; sinon `isoslinux` ou `archiveos`.
+
+Les distributions Unix reçoivent le mot-clé `unix` dans la base : taper
+« Unix » dans la recherche les fait apparaître, même quand leur nom ne contient
+pas le mot.
 
 Lancer un scraping complet :
 

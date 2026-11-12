@@ -20,6 +20,7 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
 }
+OS_CATEGORIES = {"Linux", "BSD"}
 
 class NotFound(Exception):
     pass
@@ -593,7 +594,7 @@ def main():
     parser.add_argument(
         "--all-categories",
         action="store_true",
-        help="Inclure aussi les distributions hors catégorie Linux",
+        help="Inclure aussi les distributions hors Linux/BSD",
     )
     args = parser.parse_args()
 
@@ -629,9 +630,14 @@ def main():
     if not args.all_categories:
         before = len(entries)
         entries = [
-            entry for entry in entries if "Linux" in (entry.get("categories") or [])
+            entry
+            for entry in entries
+            if OS_CATEGORIES & set(entry.get("categories") or [])
         ]
-        print(f"{before - len(entries)} distributions hors Linux exclues", file=sys.stderr)
+        print(
+            f"{before - len(entries)} distributions hors Linux/BSD exclues",
+            file=sys.stderr,
+        )
 
     if args.limit:
         entries = entries[: args.limit]

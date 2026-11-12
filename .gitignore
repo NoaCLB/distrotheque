@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+distros.json
 data/distrotheque.db
 data/distrotheque.db.tmp
 data/distrotheque.db-wal

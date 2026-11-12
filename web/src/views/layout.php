@@ -13,7 +13,7 @@ $githubIcon = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= e($title) ?></title>
-    <meta name="description" content="Catalogue de distributions Linux : recherche par nom, filtre par architecture et liens de téléchargement ISO.">
+    <meta name="description" content="Catalogue de distributions Linux, BSD et Unix : recherche par nom, filtre par architecture et liens de téléchargement ISO.">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#f4f2ec">
     <link rel="icon" href="<?= e(asset('/assets/favicon.svg')) ?>" type="image/svg+xml">

@@ -26,7 +26,7 @@ $sourceChoices = [
 ?>
 
 <div class="page-head">
-    <h1>Catalogue des distributions Linux</h1>
+    <h1>Catalogue des distributions Linux, BSD et Unix</h1>
     <p>Les images ISO sont téléchargées depuis les serveurs officiels des projets.</p>
 </div>
 

@@ -18,6 +18,7 @@ CREATE TABLE distros (
     description    TEXT    NOT NULL DEFAULT '',
     description_norm TEXT  NOT NULL DEFAULT '',
     search_norm    TEXT    NOT NULL DEFAULT '',
+    keywords       TEXT    NOT NULL DEFAULT '',
     updated_raw    TEXT    NOT NULL DEFAULT '',
     updated_at     TEXT,
     popularity     INTEGER,

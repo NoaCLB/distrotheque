@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 
 ARCHIVEOS_BASE_URL = "https://archiveos.org/"
+UNIX_TAG_URL = "https://archiveos.org/tag/unix/"
 ISOSLINUX_BASE_URL = "https://isoslinux.com/"
 DEFAULT_OUTPUT = "distros.json"
 HEADERS = {
@@ -22,6 +23,7 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
 }
+OS_CATEGORIES = {"Linux", "BSD"}
 
 DOWNLOAD_FIELDS = (
     "label",
@@ -120,6 +122,36 @@ def discover_last_page(first_html):
         if match.group(1).isdigit()
     ]
     return max(numbers) if numbers else None
+
+def unix_tag_page_url(number):
+    if number <= 1:
+        return UNIX_TAG_URL
+    return urllib.parse.urljoin(UNIX_TAG_URL, f"page/{number}/")
+
+def scrape_unix_urls(workers):
+    try:
+        first_html = fetch(UNIX_TAG_URL)
+    except Exception as error:
+        print(f"Tag unix inaccessible : {error}", file=sys.stderr)
+        return set()
+
+    last_page = discover_last_page(first_html) or 1
+
+    def load(number):
+        url = unix_tag_page_url(number)
+        try:
+            return parse_listing(fetch(url), url)
+        except Exception as error:
+            print(f"  tag unix page {number} ignorée : {error}", file=sys.stderr)
+            return []
+
+    urls = set()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for posts in pool.map(load, range(1, last_page + 1)):
+            urls.update(post["url"] for post in posts)
+
+    print(f"{len(urls)} fiches taguées unix", file=sys.stderr)
+    return urls
 
 def parse_listing(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
@@ -486,6 +518,36 @@ def resolve_gitlab(url):
         return [url.replace("/-/blob/", "/-/raw/", 1)]
     return [url]
 
+def resolve_freebsd(url):
+    parsed = urllib.parse.urlparse(url)
+    if has_image_suffix(parsed.path):
+        return [url]
+
+    try:
+        page = fetch(url, retries=2, timeout=20)
+    except Exception:
+        return [url]
+
+    soup = BeautifulSoup(page, "html.parser")
+    directories = []
+    for link in soup.select("a[href]"):
+        href = urllib.parse.urljoin(url, link.get("href", "").strip())
+        if "/ISO-IMAGES/" in href and href not in directories:
+            directories.append(href)
+
+    found = []
+    for directory in directories[:3]:
+        try:
+            listing = fetch(directory, retries=2, timeout=20)
+        except Exception:
+            continue
+        for link in BeautifulSoup(listing, "html.parser").select("a[href]"):
+            href = urllib.parse.urljoin(directory, link.get("href", "").strip())
+            if has_image_suffix(urllib.parse.urlparse(href).path) and href not in found:
+                found.append(href)
+
+    return found or [url]
+
 def resolve_generic(url):
     parsed = urllib.parse.urlparse(url)
     if has_image_suffix(parsed.path):
@@ -523,6 +585,8 @@ def resolve_link(url):
             return resolve_github(url)
         if host == "gitlab.com":
             return resolve_gitlab(url)
+        if host.endswith("freebsd.org"):
+            return resolve_freebsd(url)
         return resolve_generic(url)
     except Exception:
         return [url]
@@ -923,11 +987,20 @@ def normalize_archiveos_entry(entry):
         "downloads": normalized_downloads(archiveos_downloads(entry)),
         "requirements": archiveos_requirements(entry),
         "source": "archiveos",
+        "unix": bool(entry.get("unix")),
         "archiveos": archiveos_metadata(entry),
     }
     if entry.get("error"):
         normalized["error"] = entry["error"]
     return normalized
+
+def name_identity(name):
+    text = unicodedata.normalize("NFKD", name or "")
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = text.lower().replace("&", " and ")
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = re.sub(r"\[[^\]]*\]", " ", text)
+    return " ".join(re.split(r"[^a-z0-9]+", text)).strip()
 
 def merge_archiveos_into(target, archiveos_entry):
     target["source"] = "both"
@@ -941,6 +1014,8 @@ def merge_archiveos_into(target, archiveos_entry):
         target["downloads"] = archiveos_entry["downloads"]
     if not target.get("requirements") and archiveos_entry.get("requirements"):
         target["requirements"] = archiveos_entry["requirements"]
+    if archiveos_entry.get("unix"):
+        target["unix"] = True
     if archiveos_entry.get("error"):
         target["archiveos_error"] = archiveos_entry["error"]
 
@@ -967,6 +1042,12 @@ def merge_distros(isoslinux_entries, archiveos_entries):
     for raw in archiveos_entries:
         entry = normalize_archiveos_entry(raw)
         existing = find(entry["name"])
+        if (
+            existing
+            and entry.get("unix")
+            and name_identity(existing["name"]) != name_identity(entry["name"])
+        ):
+            existing = None
         if existing:
             merge_archiveos_into(existing, entry)
             duplicates += 1
@@ -1026,13 +1107,21 @@ def scrape_archiveos(args, workers):
         unique.append(entry)
     entries = unique
 
+    unix_urls = set()
     if not args.all_categories:
+        print("Lecture du tag unix archiveos...", file=sys.stderr)
+        unix_urls = scrape_unix_urls(workers)
+
         before = len(entries)
         entries = [
-            entry for entry in entries if "Linux" in (entry.get("categories") or [])
+            entry
+            for entry in entries
+            if OS_CATEGORIES & set(entry.get("categories") or [])
+            or entry.get("url") in unix_urls
         ]
         print(
-            f"{before - len(entries)} distributions archiveos hors Linux exclues",
+            f"{before - len(entries)} distributions archiveos "
+            "hors Linux/BSD/Unix exclues",
             file=sys.stderr,
         )
 
@@ -1045,6 +1134,13 @@ def scrape_archiveos(args, workers):
         entries = scrape_archiveos_details(entries, workers)
         entries = resolve_entry_links(entries, workers)
 
+    for entry in entries:
+        categories = set(entry.get("categories") or [])
+        entry["unix"] = (
+            entry.get("url") in unix_urls
+            and not (OS_CATEGORIES & categories)
+        )
+
     if not args.include_articles:
         before = len(entries)
         entries = [
@@ -1056,7 +1152,11 @@ def scrape_archiveos(args, workers):
 
     if not args.no_details:
         before = len(entries)
-        entries = [entry for entry in entries if entry.get("download_url")]
+        entries = [
+            entry
+            for entry in entries
+            if entry.get("download_url")
+        ]
         print(
             f"{before - len(entries)} distributions archiveos sans lien "
             "de téléchargement exclues",
@@ -1107,7 +1207,7 @@ def main():
     parser.add_argument(
         "--all-categories",
         action="store_true",
-        help="Inclure aussi les distributions archiveos hors catégorie Linux",
+        help="Inclure aussi les distributions archiveos hors Linux/BSD/Unix",
     )
     parser.add_argument(
         "--skip-isoslinux",
@@ -1135,6 +1235,14 @@ def main():
         archiveos_entries = scrape_archiveos(args, workers)
 
     merged, duplicates = merge_distros(isoslinux_entries, archiveos_entries)
+
+    before = len(merged)
+    merged = [entry for entry in merged if entry.get("downloads")]
+    if before != len(merged):
+        print(
+            f"{before - len(merged)} distributions sans ISO exclues",
+            file=sys.stderr,
+        )
 
     with open(args.output, "w", encoding="utf-8") as file:
         json.dump(merged, file, ensure_ascii=False, indent=2)

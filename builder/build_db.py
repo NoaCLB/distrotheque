@@ -230,10 +230,10 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
             INSERT INTO distros (
                 slug, name, name_norm, version, release_name, architectures,
                 source, href, website, official_url, description,
-                description_norm, search_norm, updated_raw, updated_at,
+                description_norm, search_norm, keywords, updated_raw, updated_at,
                 popularity, memory, storage, firmware, requirements_note,
                 archiveos_json, iso_count
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         insert_download = """
             INSERT OR IGNORE INTO downloads (
@@ -292,6 +292,7 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
                     description,
                     description_norm,
                     f"{name_norm} {description_norm}".strip(),
+                    "unix" if entry.get("unix") else "",
                     (entry.get("updated") or "").strip(),
                     parse_updated(entry.get("updated") or "")
                     or parse_updated(entry.get("release") or ""),

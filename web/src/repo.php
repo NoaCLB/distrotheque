@@ -57,8 +57,9 @@ function where_clauses(array $filters, array $skip = []): array
     $query = trim((string) ($filters['q'] ?? ''));
     if ($query !== '' && !in_array('q', $skip, true)) {
 
-        $clauses[] = "d.name_norm LIKE :q ESCAPE '\\'";
-        $params[':q'] = '%' . escape_like(normalize_search($query)) . '%';
+        $clauses[] = "(d.name_norm LIKE :q_name ESCAPE '\\' OR d.keywords LIKE :q_keywords ESCAPE '\\')";
+        $params[':q_name'] = '%' . escape_like(normalize_search($query)) . '%';
+        $params[':q_keywords'] = $params[':q_name'];
     }
 
     $arch = (string) ($filters['arch'] ?? '');
