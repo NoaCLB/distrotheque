@@ -1237,7 +1237,8 @@ def main():
     merged, duplicates = merge_distros(isoslinux_entries, archiveos_entries)
 
     before = len(merged)
-    merged = [entry for entry in merged if entry.get("downloads")]
+    if not args.no_details:
+        merged = [entry for entry in merged if entry.get("downloads")]
     if before != len(merged):
         print(
             f"{before - len(merged)} distributions sans ISO exclues",
