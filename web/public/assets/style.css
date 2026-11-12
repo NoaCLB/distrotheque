@@ -862,6 +862,10 @@ table {
     text-decoration-color: var(--accent);
 }
 
+.footer__credit {
+    margin-top: 0.9rem;
+}
+
 .live {
     color: var(--accent);
 }

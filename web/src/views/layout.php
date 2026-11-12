@@ -65,6 +65,12 @@ $githubIcon = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true
                 <?php endif; ?>
             </p>
         </div>
+        <div class="shell">
+            <p class="footer__credit">
+                Site réalisé par
+                <a href="https://github.com/NoaCLB" rel="noopener noreferrer" target="_blank">NoaCLB</a>
+            </p>
+        </div>
     </footer>
 
     <script src="<?= e(asset('/assets/app.js')) ?>" defer></script>
