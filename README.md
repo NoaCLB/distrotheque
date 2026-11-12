@@ -1,309 +1,343 @@
 # Distrothèque
 
 Catalogue de distributions Linux : recherche par nom, filtres par architecture
-et par source, fiches détaillées, et liens ISO directs vers les serveurs
-officiels.
+et par source, fiches détaillées et liens ISO directs.
 
-Le projet est prévu pour **Linux**. Le lancement passe par `start.py`, qui
-démarre PHP et construit la base si nécessaire.
+Le projet fonctionne sous **Linux** et se compose de deux parties :
 
-- **Scraping / base** : Python (`scrap/`, `builder/`, `update.py`)
-- **Site** : PHP 8.1+ en lecture seule sur SQLite (`web/`)
-- **Mise à jour** : automatique et paresseuse — la première visite après 3 h
-  lance le scraping en arrière-plan (aucun cron obligatoire)
+- **Python** : scraping des sources, fusion des données, construction de la base SQLite ;
+- **PHP** : lecture seule de la base et affichage du site.
+
+## Comment ça marche
 
 ```
-.
-├── scrap/                        # scrapers existants (archiveos + isoslinux)
-│   ├── scrape_distros.py         #   produit distros.json (fusion des 2 sources)
-│   ├── archiveos/
-│   └── isoslinux/
-├── builder/
-│   ├── build_db.py               # distros.json -> data/distrotheque.db (atomique)
-│   └── schema.sql
-├── update.py                     # orchestre scraping + construction de la base
-├── start.py                      # lanceur : serveur PHP + base + navigateur
-├── start.sh                      # raccourci : exécute start.py
-├── distros.json                  # données brutes (source de vérité, versionnable)
-├── data/
-│   ├── distrotheque.db           # base lue par PHP (générée, non versionnée)
-│   └── backups/                  # sauvegardes automatiques de distros.json
-├── web/
-│   ├── config.php                # chemin de la base, pagination
-│   ├── src/                      # db.php, repo.php, updater.php, helpers.php,
-│   │                             # router.php, views/
-│   └── public/                   # seul dossier exposé par le serveur web
-│       ├── index.php             # point d'entrée unique
-│       ├── .htaccess             # réécriture Apache
-│       └── assets/
-├── deploy/
-│   ├── cron.txt
-│   ├── systemd/                  # service + timer toutes les 3 h
-│   └── nginx.conf
-└── requirements.txt
+archiveos.org ─┐
+               ├─> scrap/scrape_distros.py ─> distros.json
+isoslinux.com ─┘                                    │
+                                                    v
+                                     builder/build_db.py
+                                                    │
+                                                    v
+                                     data/distrotheque.db
+                                                    │
+                                                    v
+                                        web/ (PHP + SQLite)
 ```
+
+`distros.json` est la **source de vérité** : c'est lui qu'on sauvegarde et qu'on
+versionne. La base SQLite est un fichier généré, entièrement reconstruit à
+chaque mise à jour.
 
 ## Prérequis
 
-| Outil | Version | Rôle |
+| Outil | Version | Usage |
 |---|---|---|
-| Python | 3.9+ | scraping, construction de la base, lanceur |
+| Python | 3.9+ | scraping et construction de la base |
 | PHP | 8.1+ avec `pdo_sqlite` | site |
-| SQLite | fourni avec PHP | base de données |
+| BeautifulSoup | 4.x | scraping uniquement |
 
-`beautifulsoup4` n'est nécessaire que pour le scraping :
+Debian / Ubuntu :
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+sudo apt install python3 python3-bs4 php-cli php-sqlite3
 ```
 
 La construction de la base depuis `distros.json` et le site n'utilisent que la
-bibliothèque standard de Python et PHP.
+bibliothèque standard.
 
 ## Démarrage rapide
 
 ```bash
 ./start.sh
-# ou, sans le raccourci :
-python3 start.py
 ```
 
-`start.py` vérifie PHP, construit `data/distrotheque.db` s'il est absent,
-démarre le serveur intégré de PHP et ouvre le navigateur.
-
-Options :
+`start.py` vérifie PHP, construit la base si elle est absente, lance le serveur
+intégré de PHP et ouvre le navigateur sur <http://127.0.0.1:8080>.
 
 | Option | Effet |
 |---|---|
-| `--port 9000` | utiliser un autre port (bascule automatiquement si occupé) |
-| `--host 0.0.0.0` | exposer le site sur le réseau local |
+| `--port 9000` | changer de port (bascule automatique si occupé) |
+| `--host 0.0.0.0` | rendre le site accessible sur le réseau local |
 | `--no-browser` | ne pas ouvrir le navigateur |
-| `--rebuild` | reconstruire la base depuis `distros.json` avant de démarrer |
-| `--no-build` | démarrer même si la base est absente |
+| `--rebuild` | reconstruire la base avant de démarrer |
+| `--no-build` | démarrer sans construire la base |
 
-Variables d'environnement équivalentes : `DISTROTHEQUE_HOST`,
-`DISTROTHEQUE_PORT`, `DISTROTHEQUE_PHP`.
+Variables équivalentes : `DISTROTHEQUE_HOST`, `DISTROTHEQUE_PORT`,
+`DISTROTHEQUE_PHP`.
 
-### Lancer le site à la main
+Équivalent manuel :
 
 ```bash
 php -S 127.0.0.1:8080 -t web/public web/public/router.php
 ```
 
-Puis <http://127.0.0.1:8080>. `Ctrl+C` pour arrêter.
+## Le scraping
 
-## Installation de PHP
+`scrap/scrape_distros.py` interroge deux sites et produit `distros.json` :
 
-### Debian / Ubuntu
+- **isoslinux.com** : catalogue principal (nom, version, architectures, rang de
+  popularité, description, liens de téléchargement, prérequis) ;
+- **archiveos.org** : toutes les pages du catalogue, filtrées sur la catégorie
+  Linux, hors articles et actualités. Les fiches sans lien de téléchargement
+  sont écartées.
 
-```bash
-sudo apt install php-cli php-sqlite3
-```
+Les deux sources sont fusionnées par **nom normalisé** (accents, casse,
+mots vides et numéros de version ignorés). En cas de doublon, les données
+isoslinux sont conservées et archiveos complète les champs manquants. Le champ
+`source` vaut alors `both` ; sinon `isoslinux` ou `archiveos`.
 
-### Fedora
-
-```bash
-sudo dnf install php-cli php-pdo
-```
-
-### Arch Linux
-
-```bash
-sudo pacman -S php php-sqlite
-```
-
-Vérifie ensuite que l'extension est active :
-
-```bash
-php -m | grep -i sqlite
-```
-
-## Construction de la base sans scraper
-
-Utile pour démarrer tout de suite avec le `distros.json` déjà présent :
-
-```bash
-python3 update.py --skip-scrape
-```
-
-Sortie attendue :
-
-```
-OK : 1017 distributions (avant : —), base 5,6 Mo.
-```
-
-## Lancer un scraping complet
+Lancer un scraping complet :
 
 ```bash
 python3 update.py
 ```
 
-Étapes : sauvegarde de `distros.json` → scraping → contrôle de vraisemblance
-(refus si le nombre de distributions chute de plus de 50 %) → reconstruction de
-la base. En cas d'échec du scraping, **l'ancienne base reste en ligne**.
+ou seulement le scraper :
 
-Options utiles :
+```bash
+python3 scrap/scrape_distros.py -o distros.json
+```
+
+Options utiles du scraper :
 
 | Option | Effet |
 |---|---|
-| `--skip-scrape` | reconstruire la base depuis `distros.json` |
-| `--force` | accepter une baisse massive du nombre de distributions |
+| `--workers 8` | téléchargements simultanés |
+| `--limit N` | limiter le nombre de fiches archiveos |
+| `--max-pages N` | limiter les pages archiveos |
+| `--no-details` | ne pas ouvrir les fiches (plus rapide, moins complet) |
+| `--skip-archiveos` | ignorer archiveos.org |
+| `--skip-isoslinux` | ignorer isoslinux.com |
+| `--include-articles` | inclure les articles archiveos |
+
+## La base de données
+
+`builder/build_db.py` transforme `distros.json` en base SQLite :
+
+- normalisation des noms, slugs uniques et architectures (`amd64` → `x86_64`, etc.) ;
+- normalisation des dates et calcul de la popularité ;
+- dédoublonnage des liens ISO ;
+- écriture dans un fichier temporaire `.tmp`, puis **remplacement atomique** de
+  la base : le site ne voit jamais une base à moitié écrite.
+
+Tables : `distros`, `downloads`, `distro_architectures`, `meta`.
+
+Reconstruire la base sans scraper :
+
+```bash
+python3 update.py --skip-scrape
+```
+
+Ou appeler directement le constructeur :
+
+```bash
+python3 builder/build_db.py --json distros.json --db data/distrotheque.db
+```
+
+## La mise à jour complète
+
+`update.py` orchestre tout :
+
+1. prend un verrou `data/.update.lock` (un seul processus à la fois) ;
+2. sauvegarde `distros.json` dans `data/backups/` (les 8 dernières sont gardées) ;
+3. lance le scraping ;
+4. vérifie que le JSON est valide et non vide ;
+5. refuse la mise à jour si le nombre de distributions chute de plus de 50 %
+   (garde-fou contre un scraping cassé), sauf avec `--force` ;
+6. reconstruit la base et écrit un résumé.
+
+En cas d'échec du scraping, **l'ancienne base reste en ligne**.
+
+| Option | Effet |
+|---|---|
+| `--skip-scrape` | reconstruire la base depuis le JSON existant |
+| `--force` | accepter une grosse baisse du nombre de distributions |
 | `--json`, `--db` | chemins personnalisés |
-| `--no-log` | pas de fichier dans `logs/` |
+| `--no-lock` | ignorer le verrou |
+| `--no-log` | ne pas écrire de fichier de log |
 
-Les logs vont dans `logs/update-AAAAAMMJJ-HHMMSS.log`.
+Logs : `logs/update-AAAAAMMJJ-HHMMSS.log`.
 
-## Interface
+## Mise à jour automatique du site
 
-L'interface suit un parti pris de **registre imprimé** : fond papier, encre
-noire, filets d'un pixel, aucun arrondi, aucune ombre, aucun dégradé. Un seul
-accent, le vermillon (`#b23a1e`), réservé au carré du logotype, aux survols, au
-focus et au bouton `+` des informations repliées.
+Aucun cron n'est nécessaire. Le site se met à jour **à la première visite**
+après 3 heures :
 
-- Typographie embarquée : **IBM Plex Sans** (fichier variable, 45 Ko) et
-  **IBM Plex Mono** (400/500), servis depuis `web/public/assets/fonts/`.
-  Aucun appel à Google Fonts : la page ne dépend d'aucun tiers.
-- La liste est un vrai `<table>` d'index : numéro de ligne, nom, nombre d'ISO,
-  date de mise à jour. Elle est triée par **popularité** par défaut ; les
-  distributions sans classement connues passent après. En dessous de 800 px,
-  chaque ligne devient un bloc et le tableau se lit comme une liste.
-- La recherche porte sur le **nom** des distributions, pas sur leur
-  description : chercher « Ubuntu » ne renvoie pas les fiches qui le
-  mentionnent seulement dans leur texte.
-- La fiche est une fiche technique : en-tête, caractéristiques en deux
-  colonnes, fichiers ISO (nom de fichier réel + bouton *Télécharger* ou
-  *Ouvrir* selon l'URL), présentation, informations complémentaires repliées.
-- Sans JavaScript, les filtres restent utilisables : le bouton **Appliquer**
-  apparaît et le formulaire se soumet normalement.
-
-Les fichiers de police doivent être servis en `font/woff2`. C'est le cas par
-défaut d'Apache et de nginx ; si un serveur renvoie
-`application/octet-stream`, ajouter :
-
-```nginx
-types { font/woff2 woff2; }
-```
-
-## Production (Apache)
-
-Le document root doit être `web/public`, jamais la racine du projet.
-`web/public/.htaccess` gère déjà la réécriture vers `index.php`.
-
-```apache
-<VirtualHost *:80>
-    ServerName distro.example.org
-    DocumentRoot /var/www/distrotheque/web/public
-
-    <Directory /var/www/distrotheque/web/public>
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>
-```
-
-## Production (nginx)
-
-Voir `deploy/nginx.conf`.
-
-## Variables d'environnement
-
-| Variable | Rôle | Défaut |
-|---|---|---|
-| `DISTROTHEQUE_DB` | chemin de la base SQLite | `data/distrotheque.db` |
-| `DISTROTHEQUE_AUTOUPDATE` | `0` pour couper la mise à jour à la visite | `1` |
-| `DISTROTHEQUE_PYTHON` | binaire Python à appeler | détection auto (`python3`, puis `python`) |
-| `DISTROTHEQUE_UPDATE_ARGS` | arguments ajoutés à `update.py` | vide |
-| `DISTROTHEQUE_HOST` | interface d'écoute de `start.py` | `127.0.0.1` |
-| `DISTROTHEQUE_PORT` | port d'écoute de `start.py` | `8080` |
-| `DISTROTHEQUE_PHP` | binaire PHP utilisé par `start.py` | `php` trouvé dans le `PATH` |
-
-## Mise à jour automatique : déclenchée par la visite
-
-**Aucun cron n'est nécessaire.** Le rafraîchissement est paresseux (*lazy*) :
-
-1. à chaque requête, PHP compare l'âge du fichier `data/distrotheque.db` à
-   `update_interval` (3 h par défaut) ;
-2. si la base est plus vieille, il lance `python3 update.py` **en arrière-plan,
-   détaché**, puis répond immédiatement avec les données existantes ;
-3. le scraping se fait pendant que le site continue de tourner ; dès qu'il a
-   fini, la base est remplacée d'un coup et les visiteurs suivants voient les
-   nouvelles données ;
-4. le pied de page affiche « mise à jour en cours… » pendant l'opération.
-
-Conséquences pratiques : le site se met à jour **tout seul dès qu'il y a du
-monde**, sans tâche planifiée ni serveur supplémentaire ; s'il n'y a aucune
-visite, aucune mise à jour n'est lancée (c'est sans intérêt : personne ne lit
-les données).
+1. PHP compare la date du fichier `data/distrotheque.db` à l'intervalle configuré ;
+2. si la base est trop vieille, il lance `python3 update.py` en arrière-plan,
+   détaché, puis répond immédiatement avec les données existantes ;
+3. pendant le scraping, le site continue de fonctionner et le pied de page
+   affiche « mise à jour en cours » ;
+4. à la fin, la base est remplacée d'un coup.
 
 Garde-fous :
 
 | Mécanisme | Effet |
 |---|---|
-| `update_in_progress()` | un seul `update.py` à la fois (via `data/.update.lock`) |
-| `data/.auto-update.stamp` + `flock` | pas plus d'une tentative toutes les 10 min, même sous un pic de trafic |
-| `popen` indisponible / Python absent | on ignore silencieusement : le site reste en ligne |
-| `logs/auto-update.log` | sortie de la mise à jour automatique, rotation au-delà de 5 Mo |
+| `data/.update.lock` | un seul `update.py` à la fois |
+| `data/.auto-update.stamp` | au plus une tentative toutes les 10 minutes |
+| `logs/auto-update.log` | journal de la mise à jour automatique (rotation à 5 Mo) |
+| Python ou `popen` absent | la mise à jour est ignorée, le site reste en ligne |
 
 Réglages dans `web/config.php` : `update_interval` (3 h), `update_retry_delay`
-(10 min), `python_bin`, `update_args`.
+(10 min), `lock_max_age` (6 h), `python_bin`, `update_args`.
 
-Pour forcer une mise à jour immédiate, il suffit de lancer
-`python3 update.py` à la main, ou de supprimer `data/.auto-update.stamp` et de
-recharger la page.
+Pour couper la mise à jour automatique, définir la variable
+`DISTROTHEQUE_AUTOUPDATE=0` dans l'environnement de PHP-FPM.
 
-### Option : rafraîchir même sans visiteur
+Pour la forcer immédiatement :
 
-Sur un serveur toujours allumé, un timer garantit une base fraîche même la nuit.
-Les deux mécanismes cohabitent sans conflit (le verrou empêche les doublons).
-
-#### Linux — cron
-
-```cron
-0 */3 * * * cd /var/www/distrotheque && python3 update.py >> logs/cron.log 2>&1
+```bash
+python3 update.py
 ```
 
-#### Linux — systemd (recommandé si VPS)
+### Option : mise à jour planifiée
+
+Sur un serveur toujours allumé, un cron ou un timer systemd garantit une base
+fraîche même sans visiteur. Le verrou évite les doublons avec la mise à jour
+automatique.
+
+```cron
+0 */3 * * * cd /var/www/distrotheque && /usr/bin/python3 update.py >> logs/cron.log 2>&1
+```
+
+Ou avec les fichiers fournis :
 
 ```bash
 sudo cp deploy/systemd/distrotheque-update.* /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now distrotheque-update.timer
-systemctl list-timers distrotheque-update.timer
 ```
 
-`Persistent=true` relance la mise à jour après un redémarrage manqué.
+## Production (nginx + PHP-FPM)
 
-## Schéma de la base
+Le document root doit pointer sur `web/public`, **jamais** sur la racine du
+projet, sinon `data/distrotheque.db` serait téléchargeable.
 
-| Table | Rôle |
+```bash
+sudo mkdir -p /var/www/distrotheque
+# copier le projet dans /var/www/distrotheque
+cd /var/www/distrotheque
+mkdir -p data logs
+python3 update.py --skip-scrape
+sudo chown -R root:www-data /var/www/distrotheque
+sudo chmod -R g+rwX /var/www/distrotheque
+```
+
+`www-data` doit pouvoir écrire dans `data/` et `logs/` pour que la mise à jour
+automatique fonctionne, et `python3` doit être accessible avec `beautifulsoup4`.
+
+Bloc nginx :
+
+```nginx
+server {
+    listen 80;
+    server_name distro.example.org;
+
+    root /var/www/distrotheque/web/public;
+    index index.php;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location /assets/ {
+        add_header Cache-Control "public, max-age=2592000, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+    }
+}
+```
+
+Puis :
+
+```bash
+sudo nginx -t
+sudo systemctl enable --now php8.2-fpm nginx
+sudo systemctl reload nginx
+```
+
+Le fichier `deploy/nginx.conf` contient un exemple prêt à adapter. Pour Apache,
+c'est `web/public/.htaccess` qui gère la réécriture.
+
+## Configuration
+
+`web/config.php` :
+
+| Clé | Rôle | Défaut |
+|---|---|---|
+| `db_path` | chemin de la base SQLite | `data/distrotheque.db` |
+| `per_page` | résultats par page | `24` |
+| `auto_update` | activer la mise à jour à la visite | `true` |
+| `update_interval` | âge maximal de la base | 3 h |
+| `update_retry_delay` | délai entre deux tentatives | 10 min |
+| `python_bin` | binaire Python | détection auto |
+
+Variables d'environnement :
+
+| Variable | Rôle |
 |---|---|
-| `distros` | une ligne par distribution (nom, version, architecture, description, dates normalisées) |
-| `downloads` | une ligne par lien ISO (label, version, architecture, hébergeur, URL) |
-| `distro_architectures` | table de jointure pour filtrer par architecture |
-| `meta` | date de construction, compteurs, provenance du JSON |
+| `DISTROTHEQUE_DB` | chemin de la base |
+| `DISTROTHEQUE_AUTOUPDATE` | `0` pour désactiver la mise à jour automatique |
+| `DISTROTHEQUE_PYTHON` | binaire Python |
+| `DISTROTHEQUE_UPDATE_ARGS` | arguments ajoutés à `update.py` |
+| `DISTROTHEQUE_HOST` / `DISTROTHEQUE_PORT` | écoute de `start.py` |
+| `DISTROTHEQUE_PHP` | binaire PHP utilisé par `start.py` |
 
-La base est **entièrement reconstruite** à chaque mise à jour : aucun état à
-migrer, aucune écriture concurrente côté PHP (`PRAGMA query_only`).
+## Structure
+
+```
+.
+├── scrap/
+│   ├── scrape_distros.py      # scraping + fusion -> distros.json
+│   ├── archiveos/
+│   └── isoslinux/
+├── builder/
+│   ├── build_db.py            # distros.json -> SQLite
+│   └── schema.sql
+├── update.py                  # orchestration scraping + base
+├── start.py / start.sh        # lancement local
+├── distros.json               # données brutes
+├── data/
+│   ├── distrotheque.db        # base générée
+│   └── backups/               # sauvegardes de distros.json
+├── logs/                      # journaux de mise à jour
+├── web/
+│   ├── config.php
+│   ├── src/
+│   └── public/                # seul dossier exposé
+└── deploy/
+    ├── nginx.conf
+    ├── cron.txt
+    └── systemd/
+```
 
 ## Dépannage
 
-**« PHP est introuvable »** — installe PHP 8.1+ avec `pdo_sqlite`, ou indique
-le binaire avec `DISTROTHEQUE_PHP=/chemin/vers/php ./start.sh`.
+**PHP introuvable** : installer PHP 8.1+ avec `pdo_sqlite`, ou définir
+`DISTROTHEQUE_PHP`.
 
-**« Python est introuvable »** — installe Python 3.9+, ou indique le binaire
-avec `DISTROTHEQUE_PYTHON=/chemin/vers/python`.
+**Base introuvable** : `python3 update.py --skip-scrape` ou `./start.sh --rebuild`.
 
-**« Base de données introuvable »** — lance `python3 update.py --skip-scrape`,
-ou `./start.sh --rebuild`.
+**Le scraping échoue** : consulter `logs/` ; l'ancienne base reste servie. Si
+archiveos.org ou isoslinux.com change de structure HTML, seul
+`scrap/scrape_distros.py` est à ajuster.
 
-**Le scraping échoue** — consulte `logs/` ; l'ancienne base reste servie. Si
-archiveos.org ou isoslinux.com change de structure HTML, `scrap/scrape_distros.py`
-est le seul fichier à ajuster.
+**La mise à jour automatique ne part pas** : vérifier que `www-data` peut
+écrire dans `data/` et `logs/`, que `python3` est dans le `PATH`, que
+`beautifulsoup4` est installé et que `exec` / `popen` ne sont pas désactivés
+dans PHP-FPM.
 
-**Accents cassés dans une console** — sans incidence sur les données, tout est
-en UTF-8 dans les fichiers et la base.
-
-**Erreur `database is locked`** — un seul `update.py` à la fois : le verrou
-`data/.update.lock` l'impose, et il expire au bout de 6 h en cas de plantage.
+**`database is locked`** : un seul `update.py` à la fois ; le verrou expire au
+bout de 6 h en cas de plantage.
