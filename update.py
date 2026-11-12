@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+SCRAPER = ROOT / "scrap" / "scrape_distros.py"
+BUILDER = ROOT / "builder" / "build_db.py"
+DEFAULT_JSON = ROOT / "distros.json"
+DEFAULT_DB = ROOT / "data" / "distrotheque.db"
+BACKUP_DIR = ROOT / "data" / "backups"
+LOG_DIR = ROOT / "logs"
+LOCK_FILE = ROOT / "data" / ".update.lock"
+
+KEEP_BACKUPS = 8
+LOCK_MAX_AGE = 6 * 3600
+MIN_RATIO = 0.5
+
+class UpdateError(RuntimeError):
+    pass
+
+class Logger:
+    def __init__(self, path: Path | None):
+        self.handle = None
+        if path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = path.open("a", encoding="utf-8")
+
+    def __call__(self, message: str = "") -> None:
+        line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}" if message else ""
+        print(line, flush=True)
+        if self.handle:
+            self.handle.write(line + "\n")
+            self.handle.flush()
+
+    def close(self) -> None:
+        if self.handle:
+            self.handle.close()
+
+def acquire_lock(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        age = time.time() - path.stat().st_mtime
+        if age < LOCK_MAX_AGE:
+            raise UpdateError(
+                f"Une mise à jour tourne déjà (verrou {path}, "
+                f"âge {age / 60:.0f} min)."
+            )
+        path.unlink()
+    path.write_text(str(os.getpid()), encoding="utf-8")
+
+def release_lock(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+def prune_backups(directory: Path, keep: int) -> None:
+    backups = sorted(directory.glob("distros-*.json"))
+    for old in backups[:-keep] if len(backups) > keep else []:
+        old.unlink()
+
+def backup_json(source: Path, directory: Path, log) -> Path | None:
+    if not source.is_file():
+        return None
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"distros-{datetime.now():%Y%m%d-%H%M%S}.json"
+    shutil.copy2(source, target)
+    prune_backups(directory, KEEP_BACKUPS)
+    log(f"Sauvegarde : {target.relative_to(ROOT)}")
+    return target
+
+def previous_count(db_path: Path) -> int:
+    if not db_path.is_file():
+        return 0
+    connection = None
+    try:
+        import sqlite3
+
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = connection.execute(
+            "SELECT value FROM meta WHERE key = 'distro_count'"
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+    finally:
+        if connection is not None:
+            connection.close()
+
+def run(command: list[str], label: str, log) -> None:
+    log(f"$ {' '.join(command)}")
+    started = time.time()
+    environment = dict(os.environ)
+    environment["PYTHONIOENCODING"] = "utf-8"
+    process = subprocess.run(
+        command,
+        cwd=str(ROOT),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    for line in (process.stdout or "").splitlines():
+        log(f"  {line}")
+    duration = time.time() - started
+    if process.returncode != 0:
+        raise UpdateError(f"{label} a échoué (code {process.returncode}).")
+    log(f"{label} terminé en {duration:.0f} s.")
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Met à jour la Distrothèque.")
+    parser.add_argument("--json", default=str(DEFAULT_JSON), help="Fichier JSON")
+    parser.add_argument("--db", default=str(DEFAULT_DB), help="Base SQLite")
+    parser.add_argument(
+        "--skip-scrape",
+        action="store_true",
+        help="Ne pas scraper, seulement reconstruire la base",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Accepter une baisse de plus de 50 %% du nombre de distributions",
+    )
+    parser.add_argument(
+        "--no-lock", action="store_true", help="Ignorer le verrou anti-concurrence"
+    )
+    parser.add_argument(
+        "--no-log", action="store_true", help="Ne pas écrire de fichier de log"
+    )
+    args = parser.parse_args()
+
+    json_path = Path(args.json).resolve()
+    db_path = Path(args.db).resolve()
+
+    log_path = None
+    if not args.no_log:
+        log_path = LOG_DIR / f"update-{datetime.now():%Y%m%d-%H%M%S}.log"
+    log = Logger(log_path)
+
+    locked = False
+    try:
+        if not args.no_lock:
+            acquire_lock(LOCK_FILE)
+            locked = True
+
+        log("=== Mise à jour Distrothèque ===")
+
+        if not args.skip_scrape:
+            backup_json(json_path, BACKUP_DIR, log)
+            run(
+                [sys.executable, str(SCRAPER), "-o", str(json_path)],
+                "Scraping",
+                log,
+            )
+        else:
+            log("Scraping ignoré (--skip-scrape).")
+
+        if not json_path.is_file():
+            raise UpdateError(f"JSON introuvable : {json_path}")
+
+        try:
+            entries = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise UpdateError(f"JSON invalide : {error}") from error
+
+        if not isinstance(entries, list) or not entries:
+            raise UpdateError("Le JSON ne contient aucune distribution.")
+
+        old_count = previous_count(db_path)
+        new_count = len(entries)
+        if old_count and not args.force and new_count < old_count * MIN_RATIO:
+            raise UpdateError(
+                f"Seulement {new_count} distributions contre {old_count} "
+                "auparavant : le scraping a probablement échoué. "
+                "Relance avec --force pour accepter."
+            )
+
+        run(
+            [sys.executable, str(BUILDER), "--json", str(json_path), "--db", str(db_path)],
+            "Construction de la base",
+            log,
+        )
+
+        size_kb = db_path.stat().st_size / 1024
+        log(
+            f"OK : {new_count} distributions (avant : {old_count or '—'}), "
+            f"base {size_kb:.0f} Ko."
+        )
+        return 0
+
+    except UpdateError as error:
+        log(f"ERREUR : {error}")
+        return 1
+    except KeyboardInterrupt:
+        log("Interrompu.")
+        return 130
+    except Exception as error:
+        log(f"ERREUR INATTENDUE : {error}")
+        return 1
+    finally:
+        if locked:
+            release_lock(LOCK_FILE)
+        log.close()
+
+if __name__ == "__main__":
+    raise SystemExit(main())

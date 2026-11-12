@@ -1,0 +1,22 @@
+[Unit]
+Description=Distrothèque — mise à jour du catalogue
+Documentation=file:///var/www/distrotheque/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/distrotheque
+ExecStart=/usr/bin/python3 /var/www/distrotheque/update.py
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/www/distrotheque
+TimeoutStartSec=2h
+
+[Install]
+WantedBy=multi-user.target

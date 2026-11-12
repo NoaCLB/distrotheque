@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+data/distrotheque.db
+data/distrotheque.db.tmp
+data/distrotheque.db-wal
+data/distrotheque.db-shm
+data/.update.lock
+data/.auto-update.stamp
+data/.auto-update.stamp.lock
+data/backups/
+logs/
+
+.venv/
+venv/
+.env

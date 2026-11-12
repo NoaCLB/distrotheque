@@ -1,0 +1,11 @@
+[Unit]
+Description=Distrothèque — mise à jour toutes les 3 heures
+
+[Timer]
+OnCalendar=*-*-* 00/3:00:00
+RandomizedDelaySec=600
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
