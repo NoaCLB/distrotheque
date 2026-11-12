@@ -24,9 +24,10 @@ isoslinux.com ─┘                                    │
                                         web/ (PHP + SQLite)
 ```
 
-`distros.json` est la **source de vérité** : c'est lui qu'on sauvegarde et qu'on
-versionne. La base SQLite est un fichier généré, entièrement reconstruit à
-chaque mise à jour.
+`distros.json` est le fichier intermédiaire entre le scraping et la base : il
+est sauvegardé avant chaque mise à jour dans `data/backups/`, mais il n'est pas
+versionné et peut être reconstruit à tout moment. La base SQLite est un fichier
+généré, entièrement reconstruit à chaque mise à jour.
 
 ## Prérequis
 
@@ -73,25 +74,134 @@ php -S 127.0.0.1:8080 -t web/public web/public/router.php
 
 ## Le scraping
 
-`scrap/scrape_distros.py` interroge deux sites et produit `distros.json` :
+`scrap/scrape_distros.py` construit `distros.json` à partir de deux sites :
 
-- **isoslinux.com** : catalogue principal (nom, version, architectures, rang de
-  popularité, description, liens de téléchargement, prérequis) ;
-- **archiveos.org** : toutes les pages du catalogue, filtrées sur les catégories
-  **Linux et BSD**, plus les fiches du tag **`unix`** (souvent classées
-  « Others »). Les articles et actualités sont écartés. Les fiches sans ISO sont
-  écartées, y compris les fiches Unix.
+| Source | Rôle |
+|---|---|
+| **isoslinux.com** | catalogue principal : nom, version, architectures, rang de popularité, description, ISO, prérequis |
+| **archiveos.org** | catalogue complémentaire : Linux, BSD et Unix, métadonnées et liens de téléchargement |
 
-Les deux sources sont fusionnées par **nom normalisé** (accents, casse,
-mots vides et numéros de version ignorés). En cas de doublon, les données
-isoslinux sont conservées et archiveos complète les champs manquants. Le champ
-`source` vaut alors `both` ; sinon `isoslinux` ou `archiveos`.
+Le scraper n'utilise que `urllib` et BeautifulSoup. Les requêtes du catalogue
+envoient un User-Agent de navigateur et réessaient jusqu'à 4 fois avec une
+attente croissante (2 s, 4 s, 6 s) ; un 404 est considéré comme définitif. Les
+résolutions de liens se contentent de 2 tentatives.
 
-Les distributions Unix reçoivent le mot-clé `unix` dans la base : taper
-« Unix » dans la recherche les fait apparaître, même quand leur nom ne contient
+### Déroulé complet
+
+1. **isoslinux.com** : la page d'accueil est lue en une seule requête. Chaque
+   ligne `<tr data-name>` du tableau devient une distribution : nom
+   (`span.catalog-title`), architectures, release et date (attributs `data-*`),
+   rang et version (`td.rank`, `td.version`), lien de fiche et description
+   (`span.catalog-description`). Les fiches sont ensuite ouvertes en parallèle
+   pour lire les variantes de téléchargement et les prérequis.
+2. **archiveos.org** : le catalogue est paginé (`/page/N/`). La dernière page est
+   détectée dans le HTML de la première, puis toutes les pages sont lues en
+   parallèle (8 par défaut) et remises dans l'ordre. Chaque `<article>` fournit
+   le nom, l'URL de la fiche, la date de publication, les catégories et l'image.
+   Les fiches sont dédoublonnées par URL.
+3. **Filtre des catégories** : seules les fiches **Linux** et **BSD** sont
+   gardées, plus celles du tag **`unix`** (voir ci-dessous). Les articles et
+   actualités (`News`, `Articles`) sont écartés, sauf avec
+   `--include-articles`.
+4. **Fiches archiveos** : chaque fiche est ouverte. Le scraper lit les paires
+   « Libellé : valeur » (`Web site`, `Origin`, `Category`, `Architecture`,
+   `Based on`, `The last version | Released`, etc.), la date de dernière mise à
+   jour (`.last-updt-div`), la description (paragraphes hors métadonnées) et le
+   script de téléchargement
+   (`script[src*="/get/pak/download-"]`).
+5. **Liens de téléchargement** : le script JavaScript archiveos est lu pour
+   extraire l'URL de la page intermédiaire (`open('/get/…html')` ou, à défaut,
+   `/get/download-….html`). Cette page est ouverte, ses liens externes sont
+   collectés, puis transformés en liens directs (voir la table ci-dessous).
+6. **Fusion** : les deux catalogues sont fusionnés par nom normalisé.
+7. **Nettoyage final** : toute fiche sans aucun lien de téléchargement est
+   retirée, puis `distros.json` est écrit.
+
+Pendant l'exécution, la progression est écrite sur la sortie d'erreur (pages,
+fiches, liens). Un passage complet dure environ 6 minutes et résout près de
+1 800 liens.
+
+### Le tag `unix` d'archiveos
+
+archiveos ne classe pas Unix dans une catégorie dédiée : ces distributions sont
+souvent dans **Others** (parfois `DOS` ou `Apple`). Le scraper lit donc toutes
+les pages de `https://archiveos.org/tag/unix/`, collecte les URLs des fiches et
+les ajoute au catalogue. Une fiche reçoit `unix: true` si elle figure dans ce
+tag **et** n'appartient pas aux catégories Linux ou BSD, pour ne pas mélanger
+les familles (DYNIX et 4BSD restent des BSD). Le mot-clé est propagé jusqu'à la
+base SQLite : la recherche « Unix » les trouve même quand leur nom ne contient
 pas le mot.
 
-Lancer un scraping complet :
+Les Unix sans aucun lien de téléchargement sont finalement écartés comme les
+autres : le site n'affiche que des fiches avec au moins une ISO.
+
+### Résolution des liens de téléchargement
+
+archiveos ne publie presque jamais d'ISO directement : la fiche pointe vers un
+script `/get/pak/download-….js` qui ouvre une page intermédiaire, laquelle
+contient un ou plusieurs liens externes. Le scraper suit cette chaîne, résout en
+parallèle tous les liens externes uniques, puis applique un résolveur selon
+l'hébergeur :
+
+| Hôte | Traitement |
+|---|---|
+| `archive.org` | API `archive.org/metadata/<item>` : tous les fichiers d'image de l'item |
+| `sourceforge.net` | ajout de `/download` aux fichiers |
+| `github.com` | API des releases : assets de la première release contenant une image |
+| `gitlab.com` | `/-/blob/` remplacé par `/-/raw/` |
+| `*.freebsd.org` | suivi des dossiers `ISO-IMAGES/` (les 3 premiers) et lecture de leur listing |
+| autre | lecture de la page et collecte des liens dont le chemin est une image (40 max) |
+
+Sont considérés comme images : `.iso`, `.img`, `.ova`, `.raw`, `.dmg`, `.vmdk`,
+`.vdi`, `.qcow2` et `.bin`, y compris compressés en `.gz`, `.xz`, `.bz2` ou
+`.zip`. Seuls les liens dont le chemin se termine par une de ces extensions sont
+conservés : les pages HTML, torrents et portails sans fichier sont écartés. Si
+aucun lien direct n'est trouvé, la fiche est supprimée du résultat (hors mode
+`--no-details`).
+
+Pour chaque fiche, un lien « principal » est choisi : `.iso` d'abord, puis les
+autres images brutes, puis les archives compressées, puis le reste. La liste
+`downloads` est dédoublonnée par URL.
+
+### Fusion des deux sources
+
+isoslinux est la base : ses fiches sont ajoutées d'abord et indexées sous deux
+clés calculées à partir du nom, une clé par mots et une clé concaténée. La
+normalisation supprime les accents, la casse, les parenthèses, les numéros de
+version et les mots vides (`linux`, `os`, `desktop`, `edition`, etc.). Les
+doublons internes à isoslinux sont ignorés.
+
+Chaque fiche archiveos est ensuite comparée à cet index. En cas de
+correspondance, elle ne crée pas de doublon : elle complète la fiche existante
+(architectures, version, date, description, prérequis, ISO manquantes) et passe
+`source` à `both`. Sinon elle est ajoutée telle quelle (`source: archiveos`).
+
+Cas particulier : une fiche archiveos taguée `unix` n'est fusionnée que si son
+nom complet normalisé est identique. Cela évite qu'un Unix comme **MiNT** soit
+absorbé par **Linux Mint** : le mot `linux` étant un mot vide, les deux noms se
+réduisaient à `mint`.
+
+### Format produit
+
+`distros.json` est un tableau d'objets :
+
+| Champ | Contenu |
+|---|---|
+| `name`, `version`, `release`, `updated`, `rank` | identité et dates |
+| `architectures` | liste textuelle (`x86_64, arm64`) |
+| `href`, `description` | fiche source et résumé |
+| `downloads` | variantes : `label`, `group`, `version`, `architecture`, `desktop`, `purpose`, `status`, `health`, `url` |
+| `requirements` | architectures, mémoire, stockage, firmware, note, site officiel |
+| `source` | `isoslinux`, `archiveos` ou `both` |
+| `unix` | `true` pour les fiches Unix |
+| `archiveos` | métadonnées brutes archiveos (origine, catégorie, basé sur, etc.) |
+
+Le fichier est généré : il n'est pas versionné, il est sauvegardé avant chaque
+mise à jour dans `data/backups/`, et il peut être reconstruit à tout moment.
+
+### Lancer le scraper
+
+Scraping complet (scraping + base) :
 
 ```bash
 python3 update.py
@@ -103,17 +213,26 @@ ou seulement le scraper :
 python3 scrap/scrape_distros.py -o distros.json
 ```
 
-Options utiles du scraper :
+Options du scraper :
 
 | Option | Effet |
 |---|---|
+| `-o, --output` | fichier JSON de sortie (`distros.json` par défaut) |
 | `--workers 8` | téléchargements simultanés |
+| `--isos-url` | URL du catalogue isoslinux |
+| `--start-page N` | première page archiveos |
+| `--max-pages N` | limiter le nombre de pages archiveos (0 = tout) |
 | `--limit N` | limiter le nombre de fiches archiveos |
-| `--max-pages N` | limiter les pages archiveos |
-| `--no-details` | ne pas ouvrir les fiches (plus rapide, moins complet) |
+| `--no-details` | ne pas ouvrir les fiches : test rapide de la pagination, sans métadonnées ni ISO |
+| `--include-articles` | inclure les articles et actualités archiveos |
+| `--all-categories` | inclure les catégories hors Linux/BSD/Unix (désactive aussi le tag `unix`) |
 | `--skip-archiveos` | ignorer archiveos.org |
 | `--skip-isoslinux` | ignorer isoslinux.com |
-| `--include-articles` | inclure les articles archiveos |
+
+En cas d'échec sur une fiche archiveos, le scraper continue et stocke l'erreur
+dans le champ `error`. Côté isoslinux, l'échec est noté dans `scrape_error` et la
+fiche, sans ISO, est écartée. Si le HTML d'un site change, seuls les sélecteurs
+de `scrap/scrape_distros.py` sont à ajuster.
 
 ## La base de données
 
@@ -313,7 +432,7 @@ Variables d'environnement :
 │   └── schema.sql
 ├── update.py                  # orchestration scraping + base
 ├── start.py / start.sh        # lancement local
-├── distros.json               # données brutes
+├── distros.json               # JSON généré (non versionné)
 ├── data/
 │   ├── distrotheque.db        # base générée
 │   └── backups/               # sauvegardes de distros.json
