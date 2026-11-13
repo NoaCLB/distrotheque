@@ -182,12 +182,16 @@ def main() -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=2,
-        help="Téléchargements simultanés du scraper (défaut : 2, adapté aux petits serveurs)",
+        default=1,
+        help="Téléchargements simultanés du scraper (défaut : 1, adapté aux petits serveurs)",
     )
     args = parser.parse_args()
 
     workers = max(1, int(args.workers))
+    try:
+        os.nice(19)
+    except OSError:
+        pass
     json_path = Path(args.json).resolve()
     db_path = Path(args.db).resolve()
 

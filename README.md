@@ -499,7 +499,7 @@ En cas d'échec du scraping, **l'ancienne base reste en ligne**.
 | `--deletions` | fichier des fiches supprimées (défaut `data/distro_deletions.json`) |
 | `--no-lock` | ignorer le verrou |
 | `--no-log` | ne pas écrire de fichier de log |
-| `--workers` | téléchargements simultanés du scraper (défaut `2`, pour les serveurs à 1 Go de RAM) |
+| `--workers` | téléchargements simultanés du scraper (défaut `1`, priorité basse) |
 
 Logs : `logs/update-AAAAAMMJJ-HHMMSS.log`.
 
@@ -572,9 +572,26 @@ activées : dans un conteneur LXC, elles échouent avec
 « Failed to set up mount namespacing » (`status 226/NAMESPACE`). Le service
 reste limité par l'utilisateur `www-data` et le verrou anti-concurrence.
 
-Sur un petit serveur (1 Go de RAM), `update.py` limite le scraper à **2
-téléchargements simultanés** par défaut (`--workers`) pour éviter l'OOM killer.
-Augmenter cette valeur si la machine a plus de mémoire.
+Sur un serveur contraint (1 à 4 Go de RAM), `update.py` limite le scraper à **1
+téléchargement simultané** par défaut (`--workers`) et passe le processus en
+priorité basse (`nice 19`). Le service systemd ajoute `CPUQuota=50 %` pour ne
+pas saturer la machine. Augmenter `--workers` si la machine a plus de mémoire
+et de CPU.
+
+### DNS dans un conteneur Proxmox
+
+Proxmox réécrit `/etc/resolv.conf` au démarrage du conteneur. Si les serveurs
+DNS configurés côté Proxmox ne répondent pas, le scraping échoue avec
+`Temporary failure in name resolution`. Configure les DNS du conteneur dans
+Proxmox (Options → DNS), par exemple `1.1.1.1` et `192.168.1.1`. Le service
+`distrotheque-dns.service` fourni peut servir de secours : il réécrit
+`/etc/resolv.conf` au démarrage.
+
+```bash
+sudo cp deploy/systemd/distrotheque-dns.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable distrotheque-dns.service
+```
 
 ## Production (nginx + PHP-FPM)
 

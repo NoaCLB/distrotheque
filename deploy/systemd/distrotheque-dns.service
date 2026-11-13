@@ -1,0 +1,12 @@
+[Unit]
+Description=Distrothèque — DNS de secours
+Documentation=file:///var/www/distrotheque/README.md
+After=network.target
+Before=distrotheque-update.timer
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf "nameserver 1.1.1.1\nnameserver 192.168.1.1\n" > /etc/resolv.conf'
+
+[Install]
+WantedBy=multi-user.target
