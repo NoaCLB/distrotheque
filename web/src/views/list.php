@@ -4,14 +4,13 @@ $rows = $result['rows'];
 $total = (int) $result['total'];
 $page = (int) $result['page'];
 $pages = (int) $result['pages'];
-$hasFilters = $filters['q'] !== '' || $filters['arch'] !== '' || $filters['source'] !== '' || $filters['iso'];
+$hasFilters = $filters['q'] !== '' || $filters['arch'] !== '' || $filters['source'] !== '';
 
 $pageUrl = static function (int $target) use ($query, $filters, $sort): string {
     return url('/', array_filter([
         'q'      => $query,
         'arch'   => $filters['arch'],
         'source' => $filters['source'],
-        'iso'    => $filters['iso'] ? 1 : '',
         'sort'   => $sort === 'popular' ? '' : $sort,
         'page'   => $target > 1 ? $target : '',
     ], static fn($value) => $value !== '' && $value !== false));
@@ -22,6 +21,7 @@ $sourceChoices = [
     'both'      => 'Les deux',
     'archiveos' => 'ArchiveOS',
     'isoslinux' => 'isoslinux',
+    'manual'    => 'Ajouts manuels',
 ];
 ?>
 
@@ -99,11 +99,6 @@ $sourceChoices = [
                 </select>
             </label>
 
-            <label class="check">
-                <input type="checkbox" name="iso" value="1" <?= $filters['iso'] ? 'checked' : '' ?> data-autosubmit>
-                <span>Image ISO disponible</span>
-            </label>
-
             <button class="btn btn--line btn--sm bar__apply" type="submit">Appliquer</button>
         </div>
     </div>
@@ -142,17 +137,18 @@ $sourceChoices = [
                 foreach (array_slice($archs, 0, 2) as $arch) {
                     $meta[] = arch_label($arch);
                 }
-                if (count($archs) > 2) {
-                    $meta[] = '+' . (count($archs) - 2);
-                }
+                $extraArchs = array_slice($archs, 2);
+                $extraLabel = count($extraArchs) > 1
+                    ? 'Afficher les ' . count($extraArchs) . ' autres architectures'
+                    : "Afficher l'autre architecture";
                 $date = format_date((string) $row['updated_at']);
                 ?>
                 <tr>
                     <td class="index__num"><?= e(str_pad((string) ($offset + 1), 2, '0', STR_PAD_LEFT)) ?></td>
                     <th class="index__name" scope="row">
                         <a href="<?= e(url('/distro/' . $row['slug'])) ?>"><?= e($row['name']) ?></a>
-                        <?php if ($meta): ?>
-                            <span class="index__meta"><?= e(implode(' · ', $meta)) ?></span>
+                        <?php if ($meta || $extraArchs): ?>
+                            <span class="index__meta"><?= e(implode(' · ', $meta)) ?><?php if ($extraArchs): ?><span class="arch-more__rest" id="arch-rest-<?= e((string) $row['slug']) ?>"> · <?= e(implode(' · ', array_map('arch_label', $extraArchs))) ?></span><button type="button" class="arch-more" data-arch-toggle aria-expanded="false" aria-controls="arch-rest-<?= e((string) $row['slug']) ?>" aria-label="<?= e($extraLabel) ?>" data-label-more="<?= e($extraLabel) ?>" data-label-less="Réduire les architectures" hidden><span class="arch-more__sep"> · </span><span class="arch-more__more">+<?= e((string) count($extraArchs)) ?></span><span class="arch-more__less">−</span></button><?php endif; ?></span>
                         <?php endif; ?>
                     </th>
                     <td class="index__iso<?= $isoCount === 0 ? ' index__iso--none' : '' ?>">

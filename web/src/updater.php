@@ -21,6 +21,31 @@ function update_log_path(): string
     return project_root() . '/logs/auto-update.log';
 }
 
+function db_built_at(string $path): ?int
+{
+    try {
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ];
+        if (defined('PDO::SQLITE_ATTR_OPEN_FLAGS') && defined('PDO::SQLITE_OPEN_READONLY')) {
+            $options[PDO::SQLITE_ATTR_OPEN_FLAGS] = PDO::SQLITE_OPEN_READONLY;
+        }
+
+        $pdo = new PDO('sqlite:' . $path, null, null, $options);
+        $statement = $pdo->query("SELECT value FROM meta WHERE key = 'built_at'");
+        $value = $statement->fetchColumn();
+        if (!is_string($value) || $value === '') {
+            return null;
+        }
+
+        $timestamp = strtotime($value . ' UTC');
+        return $timestamp === false ? null : $timestamp;
+    } catch (Throwable $error) {
+        return null;
+    }
+}
+
 function data_age(): int
 {
     $path = (string) config('db_path');
@@ -29,7 +54,39 @@ function data_age(): int
         return PHP_INT_MAX;
     }
 
+    $builtAt = db_built_at($path);
+    if ($builtAt !== null && $builtAt <= time() + 300) {
+        return max(0, time() - $builtAt);
+    }
+
     return max(0, time() - (int) filemtime($path));
+}
+
+function update_lock_pid(string $lock): int
+{
+    $content = @file_get_contents($lock, false, null, 0, 32);
+    if (!is_string($content)) {
+        return 0;
+    }
+
+    return (int) trim($content);
+}
+
+function process_is_alive(int $pid): bool
+{
+    if ($pid <= 0) {
+        return false;
+    }
+
+    if (@is_dir('/proc/self')) {
+        return @is_dir('/proc/' . $pid);
+    }
+
+    if (function_exists('posix_kill')) {
+        return @posix_kill($pid, 0);
+    }
+
+    return true;
 }
 
 function update_in_progress(): bool
@@ -40,7 +97,17 @@ function update_in_progress(): bool
         return false;
     }
 
-    return (time() - (int) filemtime($lock)) < (int) config('lock_max_age');
+    $age = time() - (int) filemtime($lock);
+    if ($age >= (int) config('lock_max_age')) {
+        return false;
+    }
+
+    $pid = update_lock_pid($lock);
+    if ($pid > 0 && !process_is_alive($pid)) {
+        return false;
+    }
+
+    return true;
 }
 
 function auto_update_due(): bool
@@ -125,7 +192,11 @@ function spawn_update(): bool
 
     $args = trim((string) config('update_args'));
     if ($args !== '') {
-        $command .= ' ' . $args;
+        foreach (preg_split('/\s+/', $args) ?: [] as $argument) {
+            if ($argument !== '') {
+                $command .= ' ' . escapeshellarg($argument);
+            }
+        }
     }
 
     $command = 'nohup ' . $command . ' >> ' . escapeshellarg($log) . ' 2>&1 &';

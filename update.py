@@ -17,6 +17,9 @@ SCRAPER = ROOT / "scrap" / "scrape_distros.py"
 BUILDER = ROOT / "builder" / "build_db.py"
 DEFAULT_JSON = ROOT / "distros.json"
 DEFAULT_DB = ROOT / "data" / "distrotheque.db"
+DEFAULT_MANUAL = ROOT / "data" / "manual_distros.json"
+DEFAULT_OVERRIDES = ROOT / "data" / "distro_overrides.json"
+DEFAULT_DELETIONS = ROOT / "data" / "distro_deletions.json"
 BACKUP_DIR = ROOT / "data" / "backups"
 LOG_DIR = ROOT / "logs"
 LOCK_FILE = ROOT / "data" / ".update.lock"
@@ -46,14 +49,32 @@ class Logger:
         if self.handle:
             self.handle.close()
 
+def process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
 def acquire_lock(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         age = time.time() - path.stat().st_mtime
-        if age < LOCK_MAX_AGE:
+        try:
+            pid = int(path.read_text(encoding="utf-8").strip() or "0")
+        except (OSError, ValueError):
+            pid = 0
+
+        if age < LOCK_MAX_AGE and (pid <= 0 or process_alive(pid)):
             raise UpdateError(
                 f"Une mise à jour tourne déjà (verrou {path}, "
-                f"âge {age / 60:.0f} min)."
+                f"âge {age / 60:.0f} min, PID {pid or 'inconnu'})."
             )
         path.unlink()
     path.write_text(str(os.getpid()), encoding="utf-8")
@@ -124,6 +145,21 @@ def main() -> int:
     parser.add_argument("--json", default=str(DEFAULT_JSON), help="Fichier JSON")
     parser.add_argument("--db", default=str(DEFAULT_DB), help="Base SQLite")
     parser.add_argument(
+        "--manual",
+        default=str(DEFAULT_MANUAL),
+        help="Ajouts manuels (JSON) fusionnés à la base",
+    )
+    parser.add_argument(
+        "--overrides",
+        default=str(DEFAULT_OVERRIDES),
+        help="Surcharges des fiches existantes (JSON)",
+    )
+    parser.add_argument(
+        "--deletions",
+        default=str(DEFAULT_DELETIONS),
+        help="Fiches supprimées depuis l'administration (JSON)",
+    )
+    parser.add_argument(
         "--skip-scrape",
         action="store_true",
         help="Ne pas scraper, seulement reconstruire la base",
@@ -180,22 +216,48 @@ def main() -> int:
 
         old_count = previous_count(db_path)
         new_count = len(entries)
-        if old_count and not args.force and new_count < old_count * MIN_RATIO:
+        manual_count = 0
+        manual_path = Path(args.manual)
+        if manual_path.is_file():
+            try:
+                manual_data = json.loads(manual_path.read_text(encoding="utf-8"))
+                if isinstance(manual_data, list):
+                    manual_count = len(
+                        [item for item in manual_data if isinstance(item, dict)]
+                    )
+            except (OSError, json.JSONDecodeError):
+                manual_count = 0
+        effective_count = new_count + manual_count
+        if old_count and not args.force and effective_count < old_count * MIN_RATIO:
             raise UpdateError(
-                f"Seulement {new_count} distributions contre {old_count} "
+                f"Seulement {effective_count} distributions contre {old_count} "
                 "auparavant : le scraping a probablement échoué. "
                 "Relance avec --force pour accepter."
             )
 
         run(
-            [sys.executable, str(BUILDER), "--json", str(json_path), "--db", str(db_path)],
+            [
+                sys.executable,
+                str(BUILDER),
+                "--json",
+                str(json_path),
+                "--db",
+                str(db_path),
+                "--manual",
+                str(Path(args.manual).resolve()),
+                "--overrides",
+                str(Path(args.overrides).resolve()),
+                "--deletions",
+                str(Path(args.deletions).resolve()),
+            ],
             "Construction de la base",
             log,
         )
 
         size_kb = db_path.stat().st_size / 1024
+        built_count = previous_count(db_path) or effective_count
         log(
-            f"OK : {new_count} distributions (avant : {old_count or '—'}), "
+            f"OK : {built_count} distributions (avant : {old_count or '—'}), "
             f"base {size_kb:.0f} Ko."
         )
         return 0

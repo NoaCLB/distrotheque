@@ -15,6 +15,9 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_JSON = ROOT / "distros.json"
 DEFAULT_DB = ROOT / "data" / "distrotheque.db"
+DEFAULT_MANUAL = ROOT / "data" / "manual_distros.json"
+DEFAULT_OVERRIDES = ROOT / "data" / "distro_overrides.json"
+DEFAULT_DELETIONS = ROOT / "data" / "distro_deletions.json"
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 MONTHS = {
@@ -54,11 +57,15 @@ ARCH_ALIASES = {
     "loongarch64": "loongarch64",
     "mips": "mips",
     "mipsel": "mips",
+    "sparc": "sparc",
+    "sparc64": "sparc64",
+    "sparcv9": "sparc64",
+    "sparc-v9": "sparc64",
 }
 
 ARCH_ORDER = [
     "x86_64", "x86", "arm64", "arm", "ppc64le", "ppc64",
-    "s390x", "riscv64", "loongarch64", "mips",
+    "s390x", "riscv64", "loongarch64", "mips", "sparc64", "sparc",
 ]
 
 def strip_accents(value: str) -> str:
@@ -183,13 +190,22 @@ def download_host(url: str) -> str:
     except Exception:
         return ""
 
+def external_url(value: str) -> str:
+    text = (value or "").strip()
+    if not text or re.search(r"[\x00-\x20\x7f]", text):
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return ""
+    return text
+
 def clean_url(value: str) -> str:
     text = re.sub(r"\s*\(not active\)\s*", "", value or "", flags=re.IGNORECASE).strip()
     if not text:
         return ""
-    if not text.startswith(("http://", "https://")):
-        text = "https://" + text
-    return text if urlparse(text).netloc else ""
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text):
+        return external_url(text)
+    return external_url("https://" + text)
 
 def unlink_quiet(path: Path) -> None:
     try:
@@ -199,18 +215,205 @@ def unlink_quiet(path: Path) -> None:
     except PermissionError:
         pass
 
+def download_key(item: dict) -> tuple:
+    """Clé d'une variante de téléchargement.
+
+    L'URL seule ne suffit pas : une même page peut proposer plusieurs
+    variantes (libellé, version, architecture, bureau…). Seules les lignes
+    strictement identiques sont considérées comme des doublons.
+    """
+    url = external_url(item.get("url") or "")
+    return (
+        url,
+        str(item.get("label") or "").strip(),
+        str(item.get("group") or "").strip(),
+        str(item.get("version") or "").strip(),
+        str(item.get("architecture") or "").strip(),
+        str(item.get("desktop") or "").strip(),
+        str(item.get("purpose") or "").strip(),
+        str(item.get("status") or "").strip(),
+        str(item.get("health") or "").strip(),
+    )
+
 def unique_downloads(downloads) -> list[dict]:
     seen = set()
     cleaned = []
     for item in downloads or []:
-        url = (item.get("url") or "").strip()
-        if not url or url in seen:
+        key = download_key(item)
+        if not key[0] or key in seen:
             continue
-        seen.add(url)
-        cleaned.append(item)
+        seen.add(key)
+        cleaned.append({**item, "url": key[0]})
     return cleaned
 
-def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
+def merge_manual_entries(entries: list[dict], manual: list[dict]) -> list[dict]:
+    """Fusionne les ajouts manuels dans la liste scrapée.
+
+    Une fiche manuelle qui porte le même nom normalisé qu'une fiche scrapée
+    complète celle-ci au lieu de créer un doublon. Les autres sont ajoutées.
+    """
+    if not manual:
+        return entries
+
+    indexes: dict[str, int] = {}
+    for index, entry in enumerate(entries):
+        key = name_key(entry.get("name", ""))
+        if key:
+            indexes.setdefault(key, index)
+
+    for item in manual:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+
+        key = name_key(name)
+        if key not in indexes:
+            if not str(item.get("source") or "").strip():
+                item = {**item, "source": "manual"}
+            indexes[key] = len(entries)
+            entries.append(item)
+            continue
+
+        target = entries[indexes[key]]
+
+        for field in ("version", "release", "updated", "href", "rank", "architectures"):
+            if not str(target.get(field) or "").strip() and str(item.get(field) or "").strip():
+                target[field] = item[field]
+
+        if not str(target.get("description") or "").strip() and str(item.get("description") or "").strip():
+            target["description"] = item["description"]
+
+        requirements = target.get("requirements")
+        if not isinstance(requirements, dict):
+            requirements = {}
+            target["requirements"] = requirements
+        manual_requirements = item.get("requirements")
+        if isinstance(manual_requirements, dict):
+            for key_name, value in manual_requirements.items():
+                if not str(requirements.get(key_name) or "").strip() and str(value or "").strip():
+                    requirements[key_name] = value
+
+        archiveos = target.get("archiveos")
+        if not isinstance(archiveos, dict):
+            archiveos = {}
+            target["archiveos"] = archiveos
+        manual_archiveos = item.get("archiveos")
+        if isinstance(manual_archiveos, dict):
+            for key_name, value in manual_archiveos.items():
+                if not archiveos.get(key_name) and value:
+                    archiveos[key_name] = value
+
+        existing = {
+            download_key(download)
+            for download in target.get("downloads") or []
+            if isinstance(download, dict)
+        }
+        for download in item.get("downloads") or []:
+            if not isinstance(download, dict):
+                continue
+            key = download_key(download)
+            if key[0] and key not in existing:
+                target.setdefault("downloads", []).append(download)
+                existing.add(key)
+
+    return entries
+
+def apply_overrides(entries: list[dict], overrides: list[dict]) -> int:
+    """Applique les modifications manuelles aux fiches existantes.
+
+    Une surcharge cible une fiche par son nom normalisé d'origine (clé stable
+    même si le nom affiché est modifié). Les champs et les téléchargements
+    fournis remplacent ceux de la fiche scrapée.
+    """
+    if not overrides:
+        return 0
+
+    indexes: dict[str, dict] = {}
+    for entry in entries:
+        key = name_key(entry.get("name", ""))
+        if key:
+            indexes.setdefault(key, entry)
+
+    applied = 0
+    for override in overrides:
+        if not isinstance(override, dict):
+            continue
+
+        target_key = str(override.get("target_name_norm") or "").strip()
+        data = override.get("data")
+        target = indexes.get(target_key)
+        if target is None or not isinstance(data, dict):
+            continue
+
+        for field in ("name", "version", "release", "updated", "architectures", "description", "href", "rank"):
+            target[field] = data.get(field, "")
+
+        requirements = target.get("requirements")
+        if not isinstance(requirements, dict):
+            requirements = {}
+            target["requirements"] = requirements
+        override_requirements = data.get("requirements")
+        if isinstance(override_requirements, dict):
+            for key_name in ("architectures", "official_url", "memory", "storage", "firmware", "note"):
+                requirements[key_name] = override_requirements.get(key_name, "")
+
+        archiveos = target.get("archiveos")
+        if not isinstance(archiveos, dict):
+            archiveos = {}
+            target["archiveos"] = archiveos
+        override_archiveos = data.get("archiveos")
+        if isinstance(override_archiveos, dict) and "website" in override_archiveos:
+            archiveos["website"] = override_archiveos["website"]
+
+        override_downloads = data.get("downloads")
+        if isinstance(override_downloads, list):
+            target["downloads"] = override_downloads
+
+        applied += 1
+
+    return applied
+
+def apply_deletions(entries: list[dict], deletions: list[dict]) -> int:
+    """Retire les fiches supprimées depuis l'administration.
+
+    Une suppression vise le slug stable de la fiche ; le nom normalisé sert de
+    repli si la fiche a été renommée entre-temps. Les fiches sont filtrées
+    après les surcharges pour que le slug reste celui d'origine.
+    """
+    if not deletions:
+        return 0
+
+    slugs = set()
+    names = set()
+    for record in deletions:
+        if not isinstance(record, dict):
+            continue
+        slug = str(record.get("target_slug") or "").strip()
+        name = str(record.get("target_name_norm") or "").strip()
+        if slug:
+            slugs.add(slug)
+        if name:
+            names.add(name)
+
+    if not slugs and not names:
+        return 0
+
+    kept = []
+    removed = 0
+    for entry in entries:
+        slug = str(entry.get("_slug") or "").strip()
+        key = name_key(entry.get("name", ""))
+        if (slug and slug in slugs) or (key and key in names):
+            removed += 1
+            continue
+        kept.append(entry)
+
+    entries[:] = kept
+    return removed
+
+def build(entries: list[dict], db_path: Path, json_path: Path, manual_count: int = 0, override_count: int = 0, deletion_count: int = 0) -> dict:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = db_path.with_name(db_path.name + ".tmp")
     for suffix in ("", "-wal", "-shm"):
@@ -256,6 +459,8 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
                 archiveos = {}
 
             downloads = unique_downloads(entry.get("downloads"))
+            if not downloads:
+                continue
             iso_total += len(downloads)
 
             archs = sort_archs(
@@ -275,7 +480,9 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
             if raw_rank.isdigit():
                 popularity = int(raw_rank)
 
-            slug = distro_slug(entry, used_slugs)
+            slug = str(entry.get("_slug") or "").strip()
+            if not slug:
+                slug = distro_slug(entry, used_slugs)
             cursor = connection.execute(
                 insert_distro,
                 (
@@ -286,9 +493,9 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
                     (entry.get("release") or "").strip(),
                     ", ".join(archs),
                     (entry.get("source") or "").strip(),
-                    (entry.get("href") or "").strip(),
+                    external_url(entry.get("href") or ""),
                     website,
-                    (requirements.get("official_url") or "").strip(),
+                    external_url(requirements.get("official_url") or ""),
                     description,
                     description_norm,
                     f"{name_norm} {description_norm}".strip(),
@@ -341,6 +548,9 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
             "download_count": connection.execute(
                 "SELECT COUNT(*) FROM downloads"
             ).fetchone()[0],
+            "manual_count": manual_count,
+            "override_count": override_count,
+            "deletion_count": deletion_count,
             "json_source": str(json_path),
             "json_mtime": datetime.fromtimestamp(
                 json_path.stat().st_mtime, timezone.utc
@@ -355,6 +565,9 @@ def build(entries: list[dict], db_path: Path, json_path: Path) -> dict:
         connection.commit()
     finally:
         connection.close()
+
+    if stats["distro_count"] == 0:
+        raise ValueError("Aucune distribution avec ISO : la base n'a pas été remplacée.")
 
     temp_path.replace(db_path)
     for suffix in ("-wal", "-shm"):
@@ -376,6 +589,21 @@ def main() -> int:
     )
     parser.add_argument("--json", default=str(DEFAULT_JSON), help="Fichier source")
     parser.add_argument("--db", default=str(DEFAULT_DB), help="Base SQLite de sortie")
+    parser.add_argument(
+        "--manual",
+        default=str(DEFAULT_MANUAL),
+        help="Ajouts manuels (JSON) fusionnés à la source",
+    )
+    parser.add_argument(
+        "--overrides",
+        default=str(DEFAULT_OVERRIDES),
+        help="Surcharges manuelles des fiches existantes (JSON)",
+    )
+    parser.add_argument(
+        "--deletions",
+        default=str(DEFAULT_DELETIONS),
+        help="Fiches supprimées depuis l'administration (JSON)",
+    )
     args = parser.parse_args()
 
     json_path = Path(args.json)
@@ -393,11 +621,89 @@ def main() -> int:
         print("Le JSON doit contenir une liste de distributions.", file=sys.stderr)
         return 1
 
-    stats = build(entries, Path(args.db), json_path)
+    manual_entries = []
+    manual_path = Path(args.manual)
+    if manual_path.is_file():
+        try:
+            manual_data = json.loads(manual_path.read_text(encoding="utf-8"))
+            if isinstance(manual_data, list):
+                manual_entries = [item for item in manual_data if isinstance(item, dict)]
+            else:
+                print(
+                    f"Ajouts manuels ignorés ({manual_path}) : liste attendue.",
+                    file=sys.stderr,
+                )
+        except (OSError, json.JSONDecodeError) as error:
+            print(
+                f"Ajouts manuels ignorés ({manual_path}) : {error}",
+                file=sys.stderr,
+            )
+
+    entries = merge_manual_entries(entries, manual_entries)
+
+    used_slugs: dict[str, int] = {}
+    for entry in entries:
+        entry["_slug"] = distro_slug(entry, used_slugs)
+
+    override_entries = []
+    overrides_path = Path(args.overrides)
+    if overrides_path.is_file():
+        try:
+            override_data = json.loads(overrides_path.read_text(encoding="utf-8"))
+            if isinstance(override_data, list):
+                override_entries = [item for item in override_data if isinstance(item, dict)]
+            else:
+                print(
+                    f"Surcharges ignorées ({overrides_path}) : liste attendue.",
+                    file=sys.stderr,
+                )
+        except (OSError, json.JSONDecodeError) as error:
+            print(
+                f"Surcharges ignorées ({overrides_path}) : {error}",
+                file=sys.stderr,
+            )
+
+    override_count = apply_overrides(entries, override_entries)
+
+    deletion_entries = []
+    deletions_path = Path(args.deletions)
+    if deletions_path.is_file():
+        try:
+            deletion_data = json.loads(deletions_path.read_text(encoding="utf-8"))
+            if isinstance(deletion_data, list):
+                deletion_entries = [item for item in deletion_data if isinstance(item, dict)]
+            else:
+                print(
+                    f"Suppressions ignorées ({deletions_path}) : liste attendue.",
+                    file=sys.stderr,
+                )
+        except (OSError, json.JSONDecodeError) as error:
+            print(
+                f"Suppressions ignorées ({deletions_path}) : {error}",
+                file=sys.stderr,
+            )
+
+    deleted_count = apply_deletions(entries, deletion_entries)
+
+    try:
+        stats = build(
+            entries,
+            Path(args.db),
+            json_path,
+            manual_count=len(manual_entries),
+            override_count=override_count,
+            deletion_count=deleted_count,
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     size = stats["db_size"] / 1024
     print(
         f"{stats['distro_count']} distributions, "
-        f"{stats['download_count']} téléchargements -> {stats['db_path']} "
+        f"{stats['download_count']} téléchargements "
+        f"(dont {stats['manual_count']} ajout(s) manuel(s), "
+        f"{stats['override_count']} surcharge(s), "
+        f"{stats['deletion_count']} suppression(s)) -> {stats['db_path']} "
         f"({size:.0f} Ko)"
     )
     return 0

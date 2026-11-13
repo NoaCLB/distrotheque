@@ -8,8 +8,8 @@ function base_path(): string
         return $base;
     }
 
-    $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
-    $directory = rtrim(dirname($script), '/');
+    $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php'));
+    $directory = rtrim(str_replace('\\', '/', dirname($script)), '/');
     $base = ($directory === '' || $directory === '.' || $directory === '/') ? '' : $directory;
 
     return $base;

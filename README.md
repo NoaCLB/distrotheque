@@ -6,7 +6,7 @@ architecture et par source, fiches détaillées et liens ISO directs.
 Le projet fonctionne sous **Linux** et se compose de deux parties :
 
 - **Python** : scraping des sources, fusion des données, construction de la base SQLite ;
-- **PHP** : lecture seule de la base et affichage du site.
+- **PHP** : lecture de la base, affichage du site et administration des ajouts manuels.
 
 ## Comment ça marche
 
@@ -52,8 +52,9 @@ bibliothèque standard.
 ./start.sh
 ```
 
-`start.py` vérifie PHP, construit la base si elle est absente, lance le serveur
-intégré de PHP et ouvre le navigateur sur <http://127.0.0.1:8080>.
+`start.py` vérifie PHP, construit la base si elle est absente ou plus ancienne
+que `distros.json`, lance le serveur intégré de PHP et ouvre le navigateur sur
+<http://127.0.0.1:8080>.
 
 | Option | Effet |
 |---|---|
@@ -118,8 +119,8 @@ résolutions de liens se contentent de 2 tentatives.
    retirée, puis `distros.json` est écrit.
 
 Pendant l'exécution, la progression est écrite sur la sortie d'erreur (pages,
-fiches, liens). Un passage complet dure environ 6 minutes et résout près de
-1 800 liens.
+fiches, liens). Un passage complet dure plusieurs minutes et résout près de
+2 600 liens.
 
 ### Le tag `unix` d'archiveos
 
@@ -162,6 +163,11 @@ aucun lien direct n'est trouvé, la fiche est supprimée du résultat (hors mode
 Pour chaque fiche, un lien « principal » est choisi : `.iso` d'abord, puis les
 autres images brutes, puis les archives compressées, puis le reste. La liste
 `downloads` est dédoublonnée par URL.
+
+Seuls les schémas `http` et `https` sont acceptés pour les liens de
+téléchargement et les sites externes, au scraping, à la construction de la base
+et à l'affichage. Les liens `magnet`, `javascript`, `data` ou relatifs sont
+écartés.
 
 ### Fusion des deux sources
 
@@ -240,7 +246,7 @@ de `scrap/scrape_distros.py` sont à ajuster.
 
 - normalisation des noms, slugs uniques et architectures (`amd64` → `x86_64`, etc.) ;
 - normalisation des dates et calcul de la popularité ;
-- dédoublonnage des liens ISO ;
+- dédoublonnage des variantes de téléchargement strictement identiques ;
 - écriture dans un fichier temporaire `.tmp`, puis **remplacement atomique** de
   la base : le site ne voit jamais une base à moitié écrite.
 
@@ -257,6 +263,186 @@ Ou appeler directement le constructeur :
 ```bash
 python3 builder/build_db.py --json distros.json --db data/distrotheque.db
 ```
+
+Le constructeur accepte aussi `--manual data/manual_distros.json` pour fusionner
+les ajouts manuels, `--overrides data/distro_overrides.json` pour appliquer les
+modifications de fiches et `--deletions data/distro_deletions.json` pour retirer
+les fiches supprimées (c'est ce que fait `update.py`).
+
+## Administration : ajouter et modifier des fiches
+
+En plus du scraping, une page d'administration permet d'ajouter, modifier et
+supprimer des distributions. Les fiches ajoutées à la main sont stockées dans
+`data/manual_distros.json`, **séparément** de `distros.json` : elles survivent
+donc aux reconstructions et aux nouveaux scrapings.
+
+À chaque enregistrement, la base est reconstruite automatiquement avec
+`update.py --skip-scrape --no-log`. Les fiches manuelles sont fusionnées avec
+les fiches scrapées :
+
+- si le nom normalisé existe déjà, la fiche manuelle **complète** la fiche
+  existante (champs vides, prérequis, liens de téléchargement) au lieu de créer
+  un doublon ;
+- sinon elle est ajoutée avec `source: manual` et apparaît dans le filtre
+  « Ajout manuel ».
+
+Les lignes de téléchargement sont conservées individuellement : plusieurs
+variantes peuvent partager la même URL si leur libellé, version, architecture
+ou type diffère. Seules les lignes strictement identiques sont ignorées.
+
+### Modifier une fiche scrapée
+
+La liste de l'administration affiche **toutes les fiches** du catalogue, avec
+recherche et pagination. Les fiches issues du scraping peuvent être modifiées
+comme les autres :
+
+- les changements sont stockés dans `data/distro_overrides.json` ;
+- ils sont réappliqués après chaque fusion et chaque reconstruction, sans
+  toucher à `distros.json` ;
+- le slug et la source d'origine sont conservés, donc les liens publics ne
+  changent pas ;
+- le bouton « Réinitialiser » supprime la surcharge et restaure les données
+  scrapées d'origine ;
+- le formulaire remplace entièrement les liens de téléchargement affichés :
+  penser à conserver les lignes que l'on souhaite garder.
+
+Une fiche modifiée porte le badge « Modifié » dans la liste.
+
+### Supprimer une fiche
+
+Toutes les fiches peuvent être supprimées depuis la liste, y compris celles
+issues du scraping :
+
+- un **ajout manuel** est retiré de `data/manual_distros.json` : la suppression
+  est définitive ;
+- une **fiche scrapée** est enregistrée dans `data/distro_deletions.json` ; elle
+  disparaît du catalogue à chaque reconstruction sans que `distros.json` soit
+  modifié ;
+- les fiches scrapées supprimées vont dans la **corbeille** (`/admin/deletions`)
+  et peuvent y être restaurées à tout moment ;
+- recréer un ajout manuel avec le même nom retire automatiquement l'ancienne
+  suppression de la corbeille.
+
+### Créer le compte administrateur
+
+Le compte est unique et stocké dans `data/admin.json` sous forme de hash
+(`password_hash`), avec des permissions `0600`. Il n'y a **pas** d'inscription
+depuis le navigateur : le mot de passe se définit en ligne de commande, avec
+l'utilisateur qui fait tourner PHP.
+
+En local :
+
+```bash
+php web/cli/admin.php set-password --username admin
+```
+
+En production, avec l'utilisateur de PHP-FPM :
+
+```bash
+sudo -u www-data php web/cli/admin.php set-password --username admin
+```
+
+Le mot de passe est demandé deux fois, de façon masquée. Il doit contenir au
+moins 10 caractères. Autres commandes :
+
+| Commande | Effet |
+|---|---|
+| `php web/cli/admin.php status` | afficher le compte, son état et les permissions du fichier |
+| `php web/cli/admin.php disable` | désactiver la connexion (les sessions en cours sont invalidées) |
+| `php web/cli/admin.php enable` | réactiver le compte |
+
+Un mot de passe peut aussi être fourni sans interaction avec
+`--password '…'` ou la variable `DISTROTHEQUE_ADMIN_PASSWORD` (à éviter dans
+l'historique du shell et les variables d'environnement partagées).
+
+### Utiliser la page d'administration
+
+Ouvrir <http://127.0.0.1:8080/admin> (ou `/admin` sur le domaine) :
+
+1. se connecter avec le compte créé ;
+2. la liste affiche toutes les fiches : « Modifier » ouvre l'éditeur, avec un
+   badge « Modifié » pour les fiches surchargées et « Ajout manuel » pour les
+   ajouts ;
+3. « Ajouter une distribution » : seul le nom et au moins un lien HTTP(S) sont
+   obligatoires ; les autres champs sont optionnels ;
+4. après enregistrement, la fiche est immédiatement visible dans le catalogue ;
+5. « Réinitialiser » restaure une fiche scrapée modifiée ; « Supprimer » retire
+   n'importe quelle fiche, et la corbeille permet de restaurer les fiches
+   scrapées supprimées.
+
+Format minimal d'une entrée dans `data/manual_distros.json` :
+
+```json
+[
+  {
+    "name": "Ma distribution",
+    "version": "1.0",
+    "architectures": "x86_64",
+    "description": "Description…",
+    "source": "manual",
+    "downloads": [
+      {
+        "label": "ISO",
+        "version": "1.0",
+        "architecture": "x86_64",
+        "url": "https://exemple.org/ma-distribution-1.0.iso"
+      }
+    ],
+    "requirements": {
+      "official_url": "https://exemple.org/"
+    },
+    "archiveos": {
+      "slug": "ma-distribution"
+    }
+  }
+]
+```
+
+Le fichier peut être édité à la main, mais il faut alors relancer la
+reconstruction : `python3 update.py --skip-scrape`.
+
+### Sécurité de l'administration
+
+- un seul compte, mot de passe haché avec `password_hash` (argon2id ou bcrypt
+  selon PHP) ;
+- sessions stockées dans `data/sessions`, cookie `HttpOnly`, `SameSite=Strict`,
+  `Secure` automatiquement en HTTPS ; expiration après 2 h d'inactivité et 12 h
+  au total ;
+- empreinte du User-Agent et régénération de l'identifiant de session à la
+  connexion ;
+- jeton CSRF sur tous les formulaires, vérification de la méthode HTTP ;
+- limitation des tentatives : 5 échecs par IP sur 15 minutes, comptage
+  atomique (verrou `flock`) pour qu'une rafale de requêtes parallèles ne puisse
+  pas dépasser la limite ;
+- en-têtes `no-store`, `noindex`, CSP stricte, `X-Frame-Options`,
+  `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` et interdiction
+  d'intégration en iframe ;
+- écritures JSON atomiques (fichier temporaire unique puis `rename`) et
+  reconstruction protégée par le verrou `data/.update.lock` ; si la
+  reconstruction est déjà en cours, la fiche reste enregistrée et sera prise en
+  compte au prochain passage.
+
+En production, servir l'administration **en HTTPS** et ne jamais exposer le
+dossier `data/`. Si TLS est terminé par un reverse proxy, transmettre
+`fastcgi_param HTTPS on;` à PHP-FPM pour que le cookie de session soit marqué
+`Secure`.
+
+#### Points de vigilance
+
+- Le limiteur de tentatives est **par IP** : une attaque distribuée (botnet,
+  proxies) peut toujours tenter des mots de passe. Utiliser un mot de passe long
+  et aléatoire, et restreindre `/admin` à un VPN ou à une plage d'IP si possible.
+- Un attaquant connaissant l'IP de l'administrateur peut le bloquer 15 minutes
+  en provoquant 5 échecs (déni de service limité et temporaire).
+- Les en-têtes de sécurité des pages d'erreur générées par nginx/Apache
+  dépendent de la configuration du serveur web : reprendre les `add_header` de
+  `deploy/nginx.conf` dans les blocs d'erreur si nécessaire.
+- `data/` et `logs/` ne doivent jamais être sous la racine web ; le document
+  root doit pointer sur `web/public`.
+- Le serveur de développement `php -S` affiche `X-Powered-By` et ne sert pas
+  les en-têtes statiques : il ne doit pas être exposé au réseau.
+- Les sessions et journaux sont locaux au serveur : sauvegarder `data/` sans
+  versionner `data/admin.json`, `data/sessions/` ni `logs/`.
 
 ## La mise à jour complète
 
@@ -277,6 +463,9 @@ En cas d'échec du scraping, **l'ancienne base reste en ligne**.
 | `--skip-scrape` | reconstruire la base depuis le JSON existant |
 | `--force` | accepter une grosse baisse du nombre de distributions |
 | `--json`, `--db` | chemins personnalisés |
+| `--manual` | fichier des ajouts manuels (défaut `data/manual_distros.json`) |
+| `--overrides` | fichier des modifications de fiches (défaut `data/distro_overrides.json`) |
+| `--deletions` | fichier des fiches supprimées (défaut `data/distro_deletions.json`) |
 | `--no-lock` | ignorer le verrou |
 | `--no-log` | ne pas écrire de fichier de log |
 
@@ -287,18 +476,26 @@ Logs : `logs/update-AAAAAMMJJ-HHMMSS.log`.
 Aucun cron n'est nécessaire. Le site se met à jour **à la première visite**
 après 3 heures :
 
-1. PHP compare la date du fichier `data/distrotheque.db` à l'intervalle configuré ;
+1. PHP compare la date de construction enregistrée dans la base
+   (`meta.built_at`) à l'intervalle configuré. La date du fichier n'est pas
+   utilisée : copier ou restaurer `data/distrotheque.db` ne doit pas faire
+   croire que les données sont fraîches ;
 2. si la base est trop vieille, il lance `python3 update.py` en arrière-plan,
    détaché, puis répond immédiatement avec les données existantes ;
 3. pendant le scraping, le site continue de fonctionner et le pied de page
    affiche « mise à jour en cours » ;
 4. à la fin, la base est remplacée d'un coup.
 
+La mise à jour automatique ne démarre qu'à la première visite après le délai.
+En local, il faut donc laisser le site tourner : le scraping prend plusieurs
+minutes et la base n'est remplacée qu'à la fin. Pour actualiser tout de suite,
+lancer `python3 update.py` à la main.
+
 Garde-fous :
 
 | Mécanisme | Effet |
 |---|---|
-| `data/.update.lock` | un seul `update.py` à la fois |
+| `data/.update.lock` | un seul `update.py` à la fois ; un verrou dont le PID n'existe plus est ignoré |
 | `data/.auto-update.stamp` | au plus une tentative toutes les 10 minutes |
 | `logs/auto-update.log` | journal de la mise à jour automatique (rotation à 5 Mo) |
 | Python ou `popen` absent | la mise à jour est ignorée, le site reste en ligne |
@@ -322,8 +519,12 @@ fraîche même sans visiteur. Le verrou évite les doublons avec la mise à jour
 automatique.
 
 ```cron
-0 */3 * * * cd /var/www/distrotheque && /usr/bin/python3 update.py >> logs/cron.log 2>&1
+0 */3 * * * cd /var/www/distrotheque && /usr/sbin/runuser -u www-data -- /usr/bin/python3 update.py >> logs/cron.log 2>&1
 ```
+
+Le cron doit toujours exécuter `update.py` en `www-data`, jamais en `root` :
+le dossier de travail est accessible en écriture à `www-data`, donc un cron root
+serait un vecteur d'élévation locale de privilèges.
 
 Ou avec les fichiers fournis :
 
@@ -332,6 +533,10 @@ sudo cp deploy/systemd/distrotheque-update.* /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now distrotheque-update.timer
 ```
+
+Le service fourni tourne en `www-data` et applique `ProtectSystem=strict` :
+seuls `data/`, `logs/` et `distros.json` sont montés accessibles en écriture.
+Le reste du projet est en lecture seule pendant la mise à jour.
 
 ## Production (nginx + PHP-FPM)
 
@@ -342,14 +547,34 @@ projet, sinon `data/distrotheque.db` serait téléchargeable.
 sudo mkdir -p /var/www/distrotheque
 # copier le projet dans /var/www/distrotheque
 cd /var/www/distrotheque
-mkdir -p data logs
-python3 update.py --skip-scrape
-sudo chown -R root:www-data /var/www/distrotheque
-sudo chmod -R g+rwX /var/www/distrotheque
+sudo mkdir -p data logs
+sudo chown -R root:root .
+sudo find . -type d -exec chmod 755 {} \;
+sudo find . -type f -exec chmod 644 {} \;
+
+sudo chown -R www-data:www-data data logs
+sudo chmod 750 data logs
+sudo touch distros.json
+sudo chown www-data:www-data distros.json
+sudo chmod 664 distros.json
+
+sudo chown root:www-data web/config.php
+sudo chmod 640 web/config.php
+
+sudo -u www-data /usr/bin/python3 update.py
+sudo -u www-data php web/cli/admin.php set-password --username admin
 ```
 
-`www-data` doit pouvoir écrire dans `data/` et `logs/` pour que la mise à jour
-automatique fonctionne, et `python3` doit être accessible avec `beautifulsoup4`.
+`data/admin.json` et `data/manual_distros.json` sont créés par ces commandes
+dans `data/`, déjà accessible en écriture à `www-data`. Ne jamais rendre
+`data/admin.json` lisible par le serveur web : il ne doit être accessible qu'à
+PHP-FPM et à l'administrateur système.
+
+Le code, les scripts et `web/` restent en `root:root` : `www-data` ne doit
+jamais pouvoir les modifier, sinon une compromission du site devient une
+persistance immédiate. Seuls `data/`, `logs/` et `distros.json` sont écrits par
+la mise à jour, qui tourne en `www-data`. `python3` doit être accessible avec
+`beautifulsoup4`.
 
 Bloc nginx :
 
@@ -361,11 +586,29 @@ server {
     root /var/www/distrotheque/web/public;
     index index.php;
 
+    server_tokens off;
+
     add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header X-Permitted-Cross-Domain-Policies "none" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    location = /router.php {
+        return 404;
+    }
 
     location /assets/ {
         add_header Cache-Control "public, max-age=2592000, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Permitted-Cross-Domain-Policies "none" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
         try_files $uri =404;
     }
 
@@ -395,6 +638,54 @@ sudo systemctl reload nginx
 Le fichier `deploy/nginx.conf` contient un exemple prêt à adapter. Pour Apache,
 c'est `web/public/.htaccess` qui gère la réécriture.
 
+### HTTPS obligatoire
+
+L'administration ne doit **jamais** être exposée en HTTP simple : le mot de passe
+et le cookie de session circuleraient en clair. Ajoute un serveur TLS et redirige
+tout le trafic HTTP :
+
+```nginx
+server {
+    listen 80;
+    server_name distro.example.org;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name distro.example.org;
+
+    ssl_certificate     /etc/letsencrypt/live/distro.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/distro.example.org/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # … reprendre ici le root, les locations et les autres en-têtes du bloc HTTP.
+}
+```
+
+Si TLS est terminé par un reverse proxy, transmets `fastcgi_param HTTPS on;` à
+PHP-FPM pour que le cookie de session soit marqué `Secure`. En complément, il est
+possible de restreindre l'accès à `/admin` à une plage IP ou à un VPN au niveau
+du pare-feu ou du reverse proxy.
+
+### Durcissement PHP-FPM
+
+`deploy/php-fpm-hardening.ini` désactive `cgi.fix_pathinfo`, `allow_url_fopen`,
+les uploads et les fonctions shell inutiles, et limite `open_basedir` au projet.
+`exec` et `popen` restent autorisés pour la mise à jour automatique.
+
+```bash
+sudo cp deploy/php-fpm-hardening.ini /etc/php/8.2/fpm/conf.d/99-distrotheque.ini
+sudo php-fpm8.2 -t
+sudo systemctl restart php8.2-fpm
+```
+
+Adapter `open_basedir` si le projet n'est pas dans `/var/www/distrotheque`.
+Vérifier aussi que `disable_functions` ne bloque pas `exec` / `popen` si la mise
+à jour automatique doit fonctionner.
+
 ## Configuration
 
 `web/config.php` :
@@ -402,20 +693,34 @@ c'est `web/public/.htaccess` qui gère la réécriture.
 | Clé | Rôle | Défaut |
 |---|---|---|
 | `db_path` | chemin de la base SQLite | `data/distrotheque.db` |
+| `timezone` | fuseau d'affichage des dates | `Europe/Paris` |
 | `per_page` | résultats par page | `24` |
 | `auto_update` | activer la mise à jour à la visite | `true` |
 | `update_interval` | âge maximal de la base | 3 h |
 | `update_retry_delay` | délai entre deux tentatives | 10 min |
 | `python_bin` | binaire Python | détection auto |
+| `admin_file` | compte administrateur (hash) | `data/admin.json` |
+| `admin_idle_timeout` | expiration de session après inactivité | 2 h |
+| `admin_absolute_timeout` | durée maximale d'une session | 12 h |
+| `admin_max_attempts` | échecs de connexion autorisés par IP | 5 |
+| `manual_json` | ajouts manuels | `data/manual_distros.json` |
+| `overrides_json` | modifications des fiches scrapées | `data/distro_overrides.json` |
+| `deletions_json` | fiches supprimées (corbeille) | `data/distro_deletions.json` |
 
 Variables d'environnement :
 
 | Variable | Rôle |
 |---|---|
 | `DISTROTHEQUE_DB` | chemin de la base |
+| `DISTROTHEQUE_TZ` | fuseau d'affichage (défaut `Europe/Paris`) |
 | `DISTROTHEQUE_AUTOUPDATE` | `0` pour désactiver la mise à jour automatique |
 | `DISTROTHEQUE_PYTHON` | binaire Python |
 | `DISTROTHEQUE_UPDATE_ARGS` | arguments ajoutés à `update.py` |
+| `DISTROTHEQUE_ADMIN` | chemin du compte administrateur |
+| `DISTROTHEQUE_MANUAL_JSON` | chemin des ajouts manuels |
+| `DISTROTHEQUE_OVERRIDES_JSON` | chemin des modifications de fiches |
+| `DISTROTHEQUE_DELETIONS_JSON` | chemin des fiches supprimées |
+| `DISTROTHEQUE_ADMIN_PASSWORD` | mot de passe pour `web/cli/admin.php set-password` |
 | `DISTROTHEQUE_HOST` / `DISTROTHEQUE_PORT` | écoute de `start.py` |
 | `DISTROTHEQUE_PHP` | binaire PHP utilisé par `start.py` |
 
@@ -435,14 +740,21 @@ Variables d'environnement :
 ├── distros.json               # JSON généré (non versionné)
 ├── data/
 │   ├── distrotheque.db        # base générée
+│   ├── manual_distros.json    # ajouts manuels (non versionné)
+│   ├── distro_overrides.json  # modifications de fiches (non versionné)
+│   ├── distro_deletions.json  # fiches supprimées / corbeille (non versionné)
+│   ├── admin.json             # compte admin (hash, 0600, non versionné)
+│   ├── sessions/              # sessions PHP de l'administration
 │   └── backups/               # sauvegardes de distros.json
-├── logs/                      # journaux de mise à jour
+├── logs/                      # journaux de mise à jour et d'administration
 ├── web/
 │   ├── config.php
-│   ├── src/
+│   ├── cli/admin.php          # création du compte administrateur
+│   ├── src/                   # dont src/views/admin/
 │   └── public/                # seul dossier exposé
 └── deploy/
     ├── nginx.conf
+    ├── php-fpm-hardening.ini
     ├── cron.txt
     └── systemd/
 ```
@@ -461,7 +773,9 @@ archiveos.org ou isoslinux.com change de structure HTML, seul
 **La mise à jour automatique ne part pas** : vérifier que `www-data` peut
 écrire dans `data/` et `logs/`, que `python3` est dans le `PATH`, que
 `beautifulsoup4` est installé et que `exec` / `popen` ne sont pas désactivés
-dans PHP-FPM.
+dans PHP-FPM. Vérifier aussi le pied de page : il affiche la date de
+construction réelle de la base. Si `data/.update.lock` traîne après un arrêt
+brutal, il est ignoré dès que son PID n'est plus vivant (ou au bout de 6 h).
 
 **`database is locked`** : un seul `update.py` à la fois ; le verrou expire au
 bout de 6 h en cas de plantage.

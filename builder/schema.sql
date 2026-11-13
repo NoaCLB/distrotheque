@@ -51,7 +51,6 @@ CREATE TABLE downloads (
 );
 
 CREATE INDEX idx_downloads_distro ON downloads(distro_id);
-CREATE UNIQUE INDEX idx_downloads_unique ON downloads(distro_id, url);
 
 CREATE TABLE distro_architectures (
     distro_id INTEGER NOT NULL REFERENCES distros(id) ON DELETE CASCADE,

@@ -5,6 +5,7 @@ return [
     'site_name' => 'Distrothèque',
     'tagline'   => 'Le catalogue des distributions Linux, BSD et Unix',
     'db_path'   => getenv('DISTROTHEQUE_DB') ?: dirname(__DIR__) . '/data/distrotheque.db',
+    'timezone'  => getenv('DISTROTHEQUE_TZ') ?: 'Europe/Paris',
     'per_page'  => 24,
     'max_q_length' => 80,
 
@@ -16,4 +17,15 @@ return [
     'update_args'        => getenv('DISTROTHEQUE_UPDATE_ARGS') ?: '',
 
     'python_bin'         => getenv('DISTROTHEQUE_PYTHON') ?: '',
+
+    'admin_file'         => getenv('DISTROTHEQUE_ADMIN') ?: dirname(__DIR__) . '/data/admin.json',
+    'admin_attempts_file' => dirname(__DIR__) . '/data/admin_attempts.json',
+    'admin_session_name' => 'distrotheque_admin',
+    'admin_idle_timeout' => 2 * 3600,
+    'admin_absolute_timeout' => 12 * 3600,
+    'admin_max_attempts' => 5,
+    'admin_attempt_window' => 15 * 60,
+    'manual_json'        => getenv('DISTROTHEQUE_MANUAL_JSON') ?: dirname(__DIR__) . '/data/manual_distros.json',
+    'overrides_json'     => getenv('DISTROTHEQUE_OVERRIDES_JSON') ?: dirname(__DIR__) . '/data/distro_overrides.json',
+    'deletions_json'     => getenv('DISTROTHEQUE_DELETIONS_JSON') ?: dirname(__DIR__) . '/data/distro_deletions.json',
 ];

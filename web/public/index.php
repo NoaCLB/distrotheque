@@ -6,6 +6,11 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 header('Content-Type: text/html; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+header('X-Frame-Options: DENY');
+header('Cross-Origin-Opener-Policy: same-origin');
+header('Cross-Origin-Resource-Policy: same-origin');
+header('X-Permitted-Cross-Domain-Policies: none');
+header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 header(
     "Content-Security-Policy: default-src 'self'; img-src 'self' data:; "
     . "style-src 'self'; script-src 'self'; object-src 'none'; "
@@ -14,15 +19,22 @@ header(
 
 $route = current_route();
 
+if ($route === '/admin' || str_starts_with($route, '/admin/')) {
+    require dirname(__DIR__) . '/src/admin.php';
+    admin_handle($route);
+    exit;
+}
+
 maybe_auto_update();
 
 try {
     $stats = catalogue_stats();
 } catch (Throwable $error) {
+    error_log('Distrothèque : ' . $error->getMessage());
     http_response_code(500);
     render('error', [
         'pageTitle' => 'Base indisponible',
-        'message'   => $error->getMessage(),
+        'message'   => 'La base de données du catalogue est indisponible.',
         'stats'     => [],
         'showBuildHint' => true,
     ]);
@@ -33,7 +45,18 @@ $slug = '';
 if (preg_match('#^/distro/([a-z0-9][a-z0-9-]{0,80})$#', $route, $match)) {
     $slug = $match[1];
 } elseif ($route === '/' && !empty($_GET['distro'])) {
-    $slug = (string) $_GET['distro'];
+    $candidate = (string) $_GET['distro'];
+    if (!preg_match('/^[a-z0-9][a-z0-9-]{0,80}$/', $candidate)) {
+        http_response_code(404);
+        render('error', [
+            'pageTitle' => 'Distribution introuvable',
+            'message'   => 'Aucune distribution ne correspond à cette adresse.',
+            'stats'     => $stats,
+            'query'     => '',
+        ]);
+        exit;
+    }
+    $slug = $candidate;
 }
 
 if ($slug !== '') {
@@ -110,7 +133,6 @@ $filters = [
     'q'      => $query,
     'arch'   => $arch,
     'source' => $source,
-    'iso'    => !empty($_GET['iso']),
 ];
 
 $page = max(1, (int) ($_GET['page'] ?? 1));
@@ -120,7 +142,6 @@ $activeQuery = [
     'q'      => $query,
     'arch'   => $arch,
     'source' => $source,
-    'iso'    => $filters['iso'] ? 1 : '',
     'sort'   => $sort === 'popular' ? '' : $sort,
 ];
 

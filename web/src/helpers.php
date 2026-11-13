@@ -15,6 +15,55 @@ function e($value): string
     return htmlspecialchars((string) ($value ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function json_write_atomic(string $path, $data, int $mode = 0644): bool
+{
+    $directory = dirname($path);
+    if (!is_dir($directory) && !@mkdir($directory, 0775, true)) {
+        return false;
+    }
+
+    $json = json_encode(
+        $data,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    if ($json === false) {
+        return false;
+    }
+
+    $temporary = @tempnam($directory, basename($path) . '.tmp.');
+    if ($temporary === false) {
+        return false;
+    }
+
+    if (@file_put_contents($temporary, $json . "\n", LOCK_EX) === false) {
+        @unlink($temporary);
+        return false;
+    }
+
+    @chmod($temporary, $mode);
+    if (!@rename($temporary, $path)) {
+        @unlink($temporary);
+        return false;
+    }
+
+    return true;
+}
+
+function safe_external_url(?string $value): string
+{
+    $url = trim((string) $value);
+    if ($url === '' || preg_match('/[\x00-\x1F\x7F]/', $url)) {
+        return '';
+    }
+
+    $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        return '';
+    }
+
+    return filter_var($url, FILTER_VALIDATE_URL) !== false ? $url : '';
+}
+
 function normalize_search(string $value): string
 {
     $value = trim($value);
@@ -125,6 +174,8 @@ function arch_label(string $arch): string
         'riscv64' => 'RISC-V',
         'loongarch64' => 'LoongArch',
         'mips' => 'MIPS',
+        'sparc' => 'SPARC',
+        'sparc64' => 'SPARC64',
     ];
     return $labels[$arch] ?? $arch;
 }
@@ -135,6 +186,7 @@ function source_label(string $source): string
         'archiveos' => 'ArchiveOS',
         'isoslinux' => 'isoslinux',
         'both' => 'ArchiveOS + isoslinux',
+        'manual' => 'Ajout manuel',
         default => $source,
     };
 }

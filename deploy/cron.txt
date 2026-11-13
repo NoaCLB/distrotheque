@@ -1,1 +1,1 @@
-0 */3 * * * cd /var/www/distrotheque && /usr/bin/python3 update.py >> logs/cron.log 2>&1
+0 */3 * * * cd /var/www/distrotheque && /usr/sbin/runuser -u www-data -- /usr/bin/python3 update.py >> logs/cron.log 2>&1

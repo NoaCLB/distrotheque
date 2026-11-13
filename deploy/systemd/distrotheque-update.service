@@ -12,10 +12,19 @@ WorkingDirectory=/var/www/distrotheque
 ExecStart=/usr/bin/python3 /var/www/distrotheque/update.py
 Nice=10
 IOSchedulingClass=idle
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ReadWritePaths=/var/www/distrotheque
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/www/distrotheque/data /var/www/distrotheque/logs
+ReadWritePaths=-/var/www/distrotheque/distros.json
 TimeoutStartSec=2h
 
 [Install]

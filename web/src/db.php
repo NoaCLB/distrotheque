@@ -10,10 +10,8 @@ function db(): PDO
 
     $path = (string) config('db_path');
     if (!is_file($path)) {
-        throw new RuntimeException(
-            'Base de données introuvable : ' . $path .
-            '. Lance « python3 update.py --skip-scrape » pour la construire.'
-        );
+        error_log('Distrothèque : base de données introuvable (' . $path . ').');
+        throw new RuntimeException('La base de données du catalogue est indisponible.');
     }
 
     $pdo = new PDO('sqlite:' . $path, null, null, [

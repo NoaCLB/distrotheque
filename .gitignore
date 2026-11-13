@@ -11,7 +11,19 @@ data/.update.lock
 data/.auto-update.stamp
 data/.auto-update.stamp.lock
 data/backups/
+data/admin.json
+data/admin.json.tmp
+data/admin_attempts.json
+data/manual_distros.json
+data/manual_distros.json.tmp
+data/distro_overrides.json
+data/distro_overrides.json.tmp
+data/distro_deletions.json
+data/distro_deletions.json.tmp
+data/sessions/
+data/*.tmp.*
 logs/
+session-*.md
 
 .venv/
 venv/

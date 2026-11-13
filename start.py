@@ -6,11 +6,13 @@ import argparse
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -94,12 +96,76 @@ def check_php_modules(php: str) -> None:
             file=sys.stderr,
         )
 
+def process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+def update_in_progress() -> bool:
+    lock = ROOT / "data" / ".update.lock"
+    if not lock.is_file():
+        return False
+    try:
+        pid = int(lock.read_text(encoding="utf-8").strip() or "0")
+    except (OSError, ValueError):
+        pid = 0
+    return process_alive(pid)
+
+def database_json_mtime(path: Path) -> float:
+    if not path.is_file():
+        return 0.0
+
+    connection = None
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        row = connection.execute(
+            "SELECT value FROM meta WHERE key = 'json_mtime'"
+        ).fetchone()
+        if not row or not row[0]:
+            return 0.0
+        return datetime.strptime(str(row[0]), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        ).timestamp()
+    except Exception:
+        return 0.0
+    finally:
+        if connection is not None:
+            connection.close()
+
 def ensure_database(force: bool) -> None:
+    json_path = ROOT / "distros.json"
+
     if DB_PATH.is_file() and not force:
-        return
+        try:
+            json_mtime = json_path.stat().st_mtime
+        except OSError:
+            return
+
+        if json_mtime <= database_json_mtime(DB_PATH) + 1.0:
+            return
+
+        print(
+            "distros.json est plus récent que la base : reconstruction…",
+            flush=True,
+        )
 
     if not UPDATE_SCRIPT.is_file():
         raise StartError(f"Script de construction introuvable : {UPDATE_SCRIPT}")
+
+    if update_in_progress():
+        print(
+            "Une mise à jour est déjà en cours : la base sera actualisée à la fin.",
+            flush=True,
+        )
+        return
 
     print("Construction de la base SQLite…", flush=True)
     result = subprocess.run(
@@ -153,6 +219,12 @@ def serve(php: str, host: str, port: int, open_browser: bool) -> int:
     ]
 
     print(f"Distrothèque sur {url}  (Ctrl+C pour arrêter)", flush=True)
+    print(f"Administration : {url}admin", flush=True)
+    if not (ROOT / "data" / "admin.json").is_file():
+        print(
+            "  Compte admin non configuré : php web/cli/admin.php set-password --username admin",
+            flush=True,
+        )
     if host in ("0.0.0.0", "::"):
         print(f"Écoute sur toutes les interfaces, port {port}.", flush=True)
 

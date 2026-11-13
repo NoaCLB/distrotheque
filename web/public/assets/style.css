@@ -400,31 +400,6 @@ table {
     border-bottom-color: var(--ink);
 }
 
-.check {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.2rem;
-    font-size: var(--sm);
-    cursor: pointer;
-}
-
-.check input {
-    width: 1rem;
-    height: 1rem;
-    margin: 0;
-    border: 1px solid var(--ink-2);
-    border-radius: 0;
-    background: var(--field);
-    cursor: pointer;
-    appearance: none;
-}
-
-.check input:checked {
-    border-color: var(--ink);
-    background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23f4f2ec' stroke-width='2.4'/%3E%3C/svg%3E") center / 0.7rem no-repeat;
-}
-
 .js .bar__apply {
     display: none;
 }
@@ -488,6 +463,49 @@ table {
     margin-top: 0.1rem;
     font-size: var(--sm);
     color: var(--ink-2);
+}
+
+.arch-more {
+    appearance: none;
+    border: 0;
+    margin: 0 0 0 0.3em;
+    padding: 0;
+    background: none;
+    font: inherit;
+    color: var(--ink-3);
+    cursor: pointer;
+}
+
+.arch-more__more,
+.arch-more__less {
+    text-decoration: underline dotted;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+    text-decoration-color: var(--rule-2);
+}
+
+.arch-more:hover,
+.arch-more:hover .arch-more__more,
+.arch-more:hover .arch-more__less {
+    color: var(--accent);
+    text-decoration-color: var(--accent);
+}
+
+.arch-more__less {
+    display: none;
+}
+
+.index__meta.is-open .arch-more__sep,
+.index__meta.is-open .arch-more__more {
+    display: none;
+}
+
+.index__meta.is-open .arch-more__less {
+    display: inline;
+}
+
+.index__meta.is-collapsible:not(.is-open) .arch-more__rest {
+    display: none;
 }
 
 .index__iso,
@@ -913,11 +931,6 @@ table {
         grid-template-columns: 1fr 1fr;
         width: 100%;
         gap: 0.75rem 1.25rem;
-    }
-
-    .check {
-        align-self: end;
-        margin-bottom: 0.4rem;
     }
 
     .index thead {

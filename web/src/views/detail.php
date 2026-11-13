@@ -1,7 +1,17 @@
 <?php
 
 $archs = split_archs((string) $distro['architectures']);
-$website = (string) ($distro['official_url'] !== '' ? $distro['official_url'] : $distro['website']);
+$website = safe_external_url((string) ($distro['official_url'] !== '' ? $distro['official_url'] : $distro['website']));
+$sourcePage = safe_external_url((string) $distro['href']);
+$wikipediaRaw = trim((string) ($archiveos['wikipedia'] ?? ''));
+$wikipedia = safe_external_url($wikipediaRaw);
+if ($wikipedia === '' && preg_match('/^[\p{L}\p{N}][\p{L}\p{N} ._()\',&-]{0,120}$/u', $wikipediaRaw)) {
+    $wikipedia = 'https://en.wikipedia.org/wiki/' . rawurlencode(str_replace(' ', '_', $wikipediaRaw));
+}
+$downloads = array_values(array_filter(
+    $downloads,
+    static fn(array $download): bool => safe_external_url((string) $download['url']) !== ''
+));
 $paragraphs = array_filter(array_map('trim', preg_split('/\n{1,}/', (string) $distro['description']) ?: []));
 
 $release = trim((string) $distro['release_name']);
@@ -80,8 +90,8 @@ $facts = array_filter([
         <?php if ($website !== ''): ?>
             <a class="btn" href="<?= e($website) ?>" target="_blank" rel="noopener noreferrer">Site officiel</a>
         <?php endif; ?>
-        <?php if (!empty($distro['href'])): ?>
-            <a class="btn btn--line" href="<?= e((string) $distro['href']) ?>" target="_blank" rel="noopener noreferrer">Fiche source</a>
+        <?php if ($sourcePage !== ''): ?>
+            <a class="btn btn--line" href="<?= e($sourcePage) ?>" target="_blank" rel="noopener noreferrer">Fiche source</a>
         <?php endif; ?>
     </div>
 </header>
@@ -121,8 +131,12 @@ $facts = array_filter([
         <tbody>
             <?php foreach ($downloads as $download): ?>
                 <?php
+                $downloadUrl = safe_external_url((string) $download['url']);
+                if ($downloadUrl === '') {
+                    continue;
+                }
                 $rawLabel = trim((string) $download['label']);
-                $file = $fileOf((string) $download['url']);
+                $file = $fileOf($downloadUrl);
                 $generic = in_array(strtolower($rawLabel), $genericLabels, true);
                 $name = $generic ? ($file !== '' ? $file : 'Image ISO') : $rawLabel;
                 $note = (!$generic && $file !== '' && strcasecmp($file, $name) !== 0) ? $file : '';
@@ -139,7 +153,7 @@ $facts = array_filter([
                     <td class="files__data files__arch"><?= e($download['architecture'] !== '' ? arch_label((string) $download['architecture']) : '—') ?></td>
                     <td class="files__data files__host"><?= e($download['host'] !== '' ? host_label((string) $download['host']) : '—') ?></td>
                     <td class="files__action">
-                        <a class="btn btn--line btn--sm" href="<?= e($download['url']) ?>" target="_blank" rel="noopener noreferrer nofollow">
+                        <a class="btn btn--line btn--sm" href="<?= e($downloadUrl) ?>" target="_blank" rel="noopener noreferrer nofollow">
                             <?= $isFile ? 'Télécharger' : 'Ouvrir' ?>
                         </a>
                     </td>
@@ -175,16 +189,16 @@ $facts = array_filter([
                 <dd><a href="<?= e($website) ?>" target="_blank" rel="noopener noreferrer nofollow"><?= e(host_label((string) parse_url($website, PHP_URL_HOST))) ?></a></dd>
             </div>
         <?php endif; ?>
-        <?php if (!empty($distro['href'])): ?>
+        <?php if ($sourcePage !== ''): ?>
             <div class="specs__cell">
                 <dt>Fiche source</dt>
-                <dd><a href="<?= e((string) $distro['href']) ?>" target="_blank" rel="noopener noreferrer nofollow"><?= e(source_label((string) $distro['source'])) ?></a></dd>
+                <dd><a href="<?= e($sourcePage) ?>" target="_blank" rel="noopener noreferrer nofollow"><?= e(source_label((string) $distro['source'])) ?></a></dd>
             </div>
         <?php endif; ?>
-        <?php if (!empty($archiveos['wikipedia'])): ?>
+        <?php if ($wikipedia !== ''): ?>
             <div class="specs__cell">
                 <dt>Wikipédia</dt>
-                <dd><a href="<?= e((string) $archiveos['wikipedia']) ?>" target="_blank" rel="noopener noreferrer nofollow">Article</a></dd>
+                <dd><a href="<?= e($wikipedia) ?>" target="_blank" rel="noopener noreferrer nofollow">Article</a></dd>
             </div>
         <?php endif; ?>
     </dl>

@@ -89,6 +89,15 @@ VERSION_TOKEN = re.compile(r"^(?:v|version)?\d+(?:[._-]\d+)*(?:[a-z]\d*)?$", re.
 class NotFound(Exception):
     pass
 
+def http_url(value):
+    text = (value or "").strip()
+    if not text or any(ord(char) <= 32 or ord(char) == 127 for char in text):
+        return ""
+    parsed = urllib.parse.urlparse(text)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return ""
+    return text
+
 def fetch(url, retries=4, timeout=30, headers=None):
     last_error = None
     request_headers = dict(HEADERS)
@@ -401,8 +410,8 @@ def resolve_download(script_url):
     soup = BeautifulSoup(page, "html.parser")
     links = []
     for link in soup.select("a[href]"):
-        href = link.get("href", "").strip()
-        if not href.startswith("http"):
+        href = http_url(link.get("href", ""))
+        if not href:
             continue
         if "archiveos.org" in href:
             continue
@@ -569,6 +578,8 @@ def resolve_generic(url):
     return found or [url]
 
 def is_direct_link(url):
+    if not http_url(url):
+        return False
     path = urllib.parse.unquote(urllib.parse.urlparse(url).path).lower().rstrip("/")
     if path.endswith("/download"):
         path = path[: -len("/download")]
@@ -766,7 +777,7 @@ def parse_variant(item, group):
         "purpose": purpose.get_text(" ", strip=True) if purpose else "",
         "status": status.get_text(" ", strip=True) if status else "",
         "health": health_detail.get_text(" ", strip=True) if health_detail else "",
-        "url": extract_download_url(href),
+        "url": http_url(extract_download_url(href)),
     }
 
 def parse_downloads(soup, fallback_version=""):
@@ -806,7 +817,7 @@ def parse_downloads(soup, fallback_version=""):
             ),
             "status": "",
             "health": "",
-            "url": extract_download_url(href),
+            "url": http_url(extract_download_url(href)),
         }
         if download["url"] and download["url"] not in seen:
             seen.add(download["url"])
@@ -903,13 +914,15 @@ def normalized_downloads(downloads):
     cleaned = []
     for download in downloads or []:
         item = {field: download.get(field) or "" for field in DOWNLOAD_FIELDS}
+        item["url"] = http_url(item["url"])
         if item["url"] and item["url"] not in {entry["url"] for entry in cleaned}:
             cleaned.append(item)
     return cleaned
 
 def archiveos_downloads(entry):
     urls = []
-    for url in [entry.get("download_url")] + list(entry.get("download_urls") or []):
+    for value in [entry.get("download_url")] + list(entry.get("download_urls") or []):
+        url = http_url(value)
         if url and url not in urls:
             urls.append(url)
 
@@ -939,8 +952,7 @@ def archiveos_requirements(entry):
         for part in re.split(r"[,/]", entry.get("architecture", ""))
         if part.strip()
     ]
-    website = entry.get("website", "")
-    official_url = website if website.startswith("http") else ""
+    official_url = http_url(entry.get("website", ""))
     if not architectures and not official_url:
         return None
     return {

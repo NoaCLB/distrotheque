@@ -19,6 +19,7 @@ const SOURCE_OPTIONS = [
     'both'      => 'Les deux sources',
     'isoslinux' => 'isoslinux seul',
     'archiveos' => 'ArchiveOS seul',
+    'manual'    => 'Ajout manuel',
 ];
 
 function escape_like(string $value): string
@@ -72,10 +73,6 @@ function where_clauses(array $filters, array $skip = []): array
     if ($source !== '' && !in_array('source', $skip, true)) {
         $clauses[] = 'd.source = :source';
         $params[':source'] = $source;
-    }
-
-    if (!empty($filters['iso']) && !in_array('iso', $skip, true)) {
-        $clauses[] = 'd.iso_count > 0';
     }
 
     return [$clauses ? 'WHERE ' . implode(' AND ', $clauses) : '', $params];
