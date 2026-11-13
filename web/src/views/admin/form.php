@@ -12,6 +12,8 @@ if (!$downloads) {
     $downloads[] = ['label' => '', 'version' => '', 'architecture' => '', 'url' => ''];
 }
 $errors = is_array($errors ?? null) ? $errors : [];
+$images = is_array($images ?? null) ? $images : [];
+$imageMode = $isOverride ? 'override' : 'manual';
 ?>
 <section class="admin-head">
     <div>
@@ -225,3 +227,62 @@ $errors = is_array($errors ?? null) ? $errors : [];
         <a class="btn btn--line" href="<?= e(url('/admin/distros')) ?>">Annuler</a>
     </div>
 </form>
+
+<?php if ($isEdit): ?>
+    <section class="admin-panel admin-images">
+        <div class="admin-images__head">
+            <div>
+                <h2>Images du carrousel</h2>
+                <p class="admin-note">
+                    Ces images apparaissent à droite de la présentation, sur la fiche publique.
+                    Sans image, la fiche reste inchangée. Tous les formats d'image sont acceptés,
+                    <?= e(format_bytes(image_max_bytes())) ?> maximum par fichier et
+                    <?= e((string) image_max_per_distro()) ?> images maximum.
+                    Pour un zoom net, utilise une image d'au moins 1200 px de large.
+                </p>
+            </div>
+        </div>
+
+        <?php if ($images): ?>
+            <ul class="admin-images__grid">
+                <?php foreach ($images as $image): ?>
+                    <li class="admin-image">
+                        <a class="admin-image__thumb" href="<?= e(media_url((string) $slug, (string) $image['file'])) ?>"
+                           target="_blank" rel="noopener">
+                            <img src="<?= e(media_url((string) $slug, (string) $image['file'])) ?>"
+                                 alt="<?= e((string) $image['name']) ?>" loading="lazy" decoding="async">
+                        </a>
+                        <div class="admin-image__meta">
+                            <span class="admin-image__name" title="<?= e((string) $image['name']) ?>"><?= e((string) $image['name']) ?></span>
+                            <span><?= e(format_bytes((int) $image['size'])) ?></span>
+                        </div>
+                        <form method="post" action="<?= e(url('/admin/distros/images/delete')) ?>"
+                              data-confirm="Supprimer cette image ?">
+                            <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+                            <input type="hidden" name="slug" value="<?= e((string) $slug) ?>">
+                            <input type="hidden" name="mode" value="<?= e($imageMode) ?>">
+                            <input type="hidden" name="file" value="<?= e((string) $image['file']) ?>">
+                            <button class="btn btn--line btn--sm" type="submit">Supprimer</button>
+                        </form>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php else: ?>
+            <p class="admin-empty">Aucune image pour cette fiche : le carrousel n'est pas affiché.</p>
+        <?php endif; ?>
+
+        <form class="admin-images__upload" method="post" action="<?= e(url('/admin/distros/images')) ?>"
+              enctype="multipart/form-data">
+            <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+            <input type="hidden" name="slug" value="<?= e((string) $slug) ?>">
+            <input type="hidden" name="mode" value="<?= e($imageMode) ?>">
+
+            <label class="field">
+                <span class="field__label">Ajouter des images</span>
+                <input class="field__input" type="file" name="images[]" accept="image/*" multiple required>
+            </label>
+
+            <button class="btn" type="submit">Téléverser</button>
+        </form>
+    </section>
+<?php endif; ?>

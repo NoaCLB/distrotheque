@@ -19,6 +19,11 @@ header(
 
 $route = current_route();
 
+if (preg_match('#^/media/([a-z0-9][a-z0-9-]{0,80})/([a-f0-9]{16}\.[a-z0-9]{1,8})$#', $route, $media)) {
+    images_serve($media[1], $media[2]);
+    exit;
+}
+
 if ($route === '/admin' || str_starts_with($route, '/admin/')) {
     require dirname(__DIR__) . '/src/admin.php';
     admin_handle($route);
@@ -83,12 +88,17 @@ if ($slug !== '') {
 
     $related = other_distros((string) $distro['slug'], (string) $distro['source'], 6);
 
+    require_once dirname(__DIR__) . '/src/admin_auth.php';
+    $adminLoggedIn = admin_is_logged_in();
+
     render('detail', [
         'pageTitle' => (string) $distro['name'],
         'distro'    => $distro,
         'downloads' => downloads_for((int) $distro['id']),
         'archiveos' => $archiveos,
+        'images'    => images_for_slug((string) $distro['slug']),
         'related'   => $related['rows'],
+        'adminLoggedIn' => $adminLoggedIn,
         'stats'     => $stats,
         'query'     => '',
     ]);

@@ -9,8 +9,14 @@ function base_path(): string
     }
 
     $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php'));
-    $directory = rtrim(str_replace('\\', '/', dirname($script)), '/');
-    $base = ($directory === '' || $directory === '.' || $directory === '/') ? '' : $directory;
+    $base = '';
+    $position = strpos($script, '/index.php');
+    if ($position !== false) {
+        $base = rtrim(substr($script, 0, $position), '/');
+    }
+    if ($base === '.' || $base === '/') {
+        $base = '';
+    }
 
     return $base;
 }

@@ -9,6 +9,7 @@ if ($timezone !== '' && in_array($timezone, timezone_identifiers_list(), true)) 
 }
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/images.php';
 require_once __DIR__ . '/repo.php';
 require_once __DIR__ . '/router.php';
 require_once __DIR__ . '/updater.php';

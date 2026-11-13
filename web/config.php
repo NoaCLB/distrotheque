@@ -28,4 +28,8 @@ return [
     'manual_json'        => getenv('DISTROTHEQUE_MANUAL_JSON') ?: dirname(__DIR__) . '/data/manual_distros.json',
     'overrides_json'     => getenv('DISTROTHEQUE_OVERRIDES_JSON') ?: dirname(__DIR__) . '/data/distro_overrides.json',
     'deletions_json'     => getenv('DISTROTHEQUE_DELETIONS_JSON') ?: dirname(__DIR__) . '/data/distro_deletions.json',
+    'images_json'        => getenv('DISTROTHEQUE_IMAGES_JSON') ?: dirname(__DIR__) . '/data/distro_images.json',
+    'uploads_dir'        => getenv('DISTROTHEQUE_UPLOADS_DIR') ?: dirname(__DIR__) . '/data/uploads',
+    'image_max_bytes'    => 100 * 1024 * 1024,
+    'image_max_per_distro' => 30,
 ];

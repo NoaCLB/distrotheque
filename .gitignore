@@ -20,6 +20,9 @@ data/distro_overrides.json
 data/distro_overrides.json.tmp
 data/distro_deletions.json
 data/distro_deletions.json.tmp
+data/distro_images.json
+data/distro_images.json.tmp
+data/uploads/
 data/sessions/
 data/*.tmp.*
 logs/

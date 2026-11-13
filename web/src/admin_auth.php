@@ -363,6 +363,26 @@ function admin_is_authenticated(): bool
     return true;
 }
 
+function admin_is_logged_in(): bool
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return admin_is_authenticated();
+    }
+
+    $cookie = (string) config('admin_session_name');
+    if ($cookie === '' || empty($_COOKIE[$cookie])) {
+        return false;
+    }
+
+    $directory = project_root() . '/data/sessions';
+    if (!is_dir($directory) || !is_writable($directory)) {
+        return false;
+    }
+
+    admin_session_start();
+    return admin_is_authenticated();
+}
+
 function admin_csrf_token(bool $create = true): string
 {
     $token = (string) ($_SESSION['admin_csrf'] ?? '');

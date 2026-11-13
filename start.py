@@ -211,6 +211,12 @@ def serve(php: str, host: str, port: int, open_browser: bool) -> int:
     url = browser_url(host, port)
     command = [
         php,
+        "-d",
+        "upload_max_filesize=100M",
+        "-d",
+        "post_max_size=512M",
+        "-d",
+        "max_file_uploads=20",
         "-S",
         f"{host}:{port}",
         "-t",

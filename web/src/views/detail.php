@@ -87,6 +87,10 @@ $facts = array_filter([
     </div>
 
     <div class="actions">
+        <?php if (!empty($adminLoggedIn)): ?>
+            <a class="btn btn--line" href="<?= e(url('/admin/distros/edit', ['slug' => (string) $distro['slug']])) ?>"
+               title="Modifier cette fiche dans l'administration">Modifier</a>
+        <?php endif; ?>
         <?php if ($website !== ''): ?>
             <a class="btn" href="<?= e($website) ?>" target="_blank" rel="noopener noreferrer">Site officiel</a>
         <?php endif; ?>
@@ -163,14 +167,94 @@ $facts = array_filter([
     </table>
 <?php endif; ?>
 
-<?php if ($paragraphs): ?>
+<?php
+$images = is_array($images ?? null) ? $images : [];
+$galleryCount = count($images);
+$hasImages = $galleryCount > 0;
+?>
+
+<?php if ($paragraphs || $hasImages): ?>
     <div class="sect">
         <h2 class="sect__title">Présentation</h2>
+        <?php if ($hasImages): ?>
+            <span class="sect__count"><?= e((string) $galleryCount) ?> image<?= $galleryCount > 1 ? 's' : '' ?></span>
+        <?php endif; ?>
     </div>
-    <div class="prose">
-        <?php foreach (array_slice($paragraphs, 0, 12) as $paragraph): ?>
-            <p><?= e($paragraph) ?></p>
-        <?php endforeach; ?>
+    <div class="<?= $hasImages ? 'presentation presentation--media' . ($paragraphs ? '' : ' presentation--solo') : 'prose' ?>">
+        <?php if ($paragraphs): ?>
+            <?php if ($hasImages): ?><div class="prose"><?php endif; ?>
+            <?php foreach (array_slice($paragraphs, 0, 12) as $paragraph): ?>
+                <p><?= e($paragraph) ?></p>
+            <?php endforeach; ?>
+            <?php if ($hasImages): ?></div><?php endif; ?>
+        <?php endif; ?>
+
+        <?php if ($hasImages): ?>
+            <div class="carousel" data-carousel tabindex="0"
+                 aria-roledescription="carrousel"
+                 aria-label="Aperçus de <?= e($distro['name']) ?>">
+                <div class="carousel__viewport">
+                    <div class="carousel__track" data-carousel-track>
+                        <?php foreach ($images as $index => $image): ?>
+                            <figure class="carousel__slide" data-carousel-slide
+                                    role="group"
+                                    aria-roledescription="diapositive"
+                                    aria-label="<?= e(($index + 1) . ' sur ' . $galleryCount) ?>"
+                                    aria-hidden="<?= $index === 0 ? 'false' : 'true' ?>">
+                                <img src="<?= e(media_url((string) $distro['slug'], (string) $image['file'])) ?>"
+                                     alt="<?= e($distro['name'] . ' — aperçu ' . ($index + 1)) ?>"
+                                     loading="<?= $index === 0 ? 'eager' : 'lazy' ?>"
+                                     decoding="async">
+                            </figure>
+                        <?php endforeach; ?>
+                    </div>
+                    <span class="carousel__zoom" aria-hidden="true">Agrandir</span>
+                </div>
+
+                <?php if ($galleryCount > 1): ?>
+                    <div class="carousel__bar">
+                        <div class="carousel__dots" data-carousel-dots></div>
+                        <div class="carousel__controls">
+                            <span class="carousel__counter" data-carousel-counter>1 / <?= e((string) $galleryCount) ?></span>
+                            <button class="carousel__nav carousel__nav--prev" type="button"
+                                    data-carousel-prev aria-label="Image précédente">‹</button>
+                            <button class="carousel__nav carousel__nav--next" type="button"
+                                    data-carousel-next aria-label="Image suivante">›</button>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+
+<?php if ($hasImages): ?>
+    <div class="lightbox" data-lightbox hidden>
+        <div class="lightbox__backdrop" aria-hidden="true"></div>
+        <div class="lightbox__dialog" role="dialog" aria-modal="true" aria-label="Aperçu des images">
+            <div class="lightbox__bar">
+                <?php if ($galleryCount > 1): ?>
+                    <span class="lightbox__counter" data-lightbox-counter></span>
+                <?php endif; ?>
+                <div class="lightbox__actions">
+                    <button class="lightbox__zoom" type="button" data-lightbox-zoom
+                            aria-pressed="false">Plein écran</button>
+                    <button class="lightbox__close" type="button" data-lightbox-close
+                            aria-label="Fermer l'aperçu">×</button>
+                </div>
+            </div>
+            <div class="lightbox__stage">
+                <?php if ($galleryCount > 1): ?>
+                    <button class="lightbox__nav lightbox__nav--prev" type="button"
+                            data-lightbox-prev aria-label="Image précédente">‹</button>
+                <?php endif; ?>
+                <img class="lightbox__image" data-lightbox-image alt="">
+                <?php if ($galleryCount > 1): ?>
+                    <button class="lightbox__nav lightbox__nav--next" type="button"
+                            data-lightbox-next aria-label="Image suivante">›</button>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 <?php endif; ?>
 

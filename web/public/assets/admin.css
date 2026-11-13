@@ -462,3 +462,78 @@
         grid-template-columns: 1fr;
     }
 }
+
+.admin-images {
+    margin-top: 1.5rem;
+}
+
+.admin-images h2 {
+    margin: 0 0 0.35rem;
+}
+
+.admin-images__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+    gap: 1rem;
+    margin: 1.25rem 0;
+    padding: 0;
+    list-style: none;
+}
+
+.admin-image {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+}
+
+.admin-image__thumb {
+    display: block;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: var(--paper-2);
+}
+
+.admin-image__thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.admin-image__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    font-size: var(--xs);
+    color: var(--ink-2);
+}
+
+.admin-image__name {
+    color: var(--ink);
+    overflow-wrap: anywhere;
+}
+
+.admin-image form {
+    margin: 0;
+}
+
+.admin-image .btn {
+    width: 100%;
+}
+
+.admin-images__upload {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+}
+
+.admin-images__upload .field {
+    flex: 1 1 20rem;
+    margin: 0;
+}

@@ -370,6 +370,10 @@ Ouvrir <http://127.0.0.1:8080/admin> (ou `/admin` sur le domaine) :
    n'importe quelle fiche, et la corbeille permet de restaurer les fiches
    scrapées supprimées.
 
+Quand tu es connecté, un bouton « Modifier » apparaît aussi sur chaque fiche
+publique, à gauche de « Site officiel » : il ouvre directement la bonne fiche
+dans l'administration (ajout manuel ou fiche scrapée).
+
 Format minimal d'une entrée dans `data/manual_distros.json` :
 
 ```json
@@ -400,6 +404,33 @@ Format minimal d'une entrée dans `data/manual_distros.json` :
 
 Le fichier peut être édité à la main, mais il faut alors relancer la
 reconstruction : `python3 update.py --skip-scrape`.
+
+### Images et carrousel
+
+Chaque fiche peut recevoir des images depuis l'éditeur d'administration,
+section « Images du carrousel ». Elles s'affichent à droite de la présentation
+sur la fiche publique, sous forme de carrousel. **Sans image, la fiche reste
+exactement comme avant.**
+
+- tous les formats reconnus comme `image/*` sont acceptés (JPEG, PNG, WebP,
+  AVIF, GIF, SVG, HEIC, TIFF…) ;
+- **100 Mo maximum par fichier**, 30 images par fiche ;
+- les fichiers sont stockés dans `data/uploads/<slug>/` et servis par
+  `/media/<slug>/<fichier>` : ils ne sont jamais exécutés ;
+- les métadonnées sont dans `data/distro_images.json` ;
+- le type MIME est vérifié côté serveur, les noms de fichiers sont générés
+  aléatoirement et les SVG sont servis avec une CSP `sandbox`.
+
+Penser à inclure `data/uploads/` dans les sauvegardes : les images ne sont pas
+dans `distros.json`. Pour un zoom net, fournir des images d'au moins 1200 px de
+large ; le bouton « Plein écran » de la visionneuse agrandit l'image au-delà de
+sa taille réelle, avec la perte de netteté correspondante.
+
+Les limites d'envoi sont dans `web/public/.user.ini` (100 Mo par fichier,
+512 Mo de requête). En production, augmenter aussi `client_max_body_size` dans
+nginx (512 Mo dans `deploy/nginx.conf`). Le serveur PHP intégré ignore
+`.user.ini` : `start.py` / `start.sh` passent donc ces limites avec `-d`
+(`upload_max_filesize=100M`, `post_max_size=512M`).
 
 ### Sécurité de l'administration
 
@@ -587,6 +618,8 @@ server {
     index index.php;
 
     server_tokens off;
+    client_max_body_size 512m;
+    client_body_timeout 300s;
 
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
@@ -623,6 +656,7 @@ server {
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_read_timeout 300s;
     }
 }
 ```
@@ -706,6 +740,10 @@ Vérifier aussi que `disable_functions` ne bloque pas `exec` / `popen` si la mis
 | `manual_json` | ajouts manuels | `data/manual_distros.json` |
 | `overrides_json` | modifications des fiches scrapées | `data/distro_overrides.json` |
 | `deletions_json` | fiches supprimées (corbeille) | `data/distro_deletions.json` |
+| `images_json` | métadonnées des images du carrousel | `data/distro_images.json` |
+| `uploads_dir` | fichiers des images | `data/uploads` |
+| `image_max_bytes` | taille maximale par image | 100 Mo |
+| `image_max_per_distro` | nombre maximal d'images par fiche | 30 |
 
 Variables d'environnement :
 
@@ -720,6 +758,8 @@ Variables d'environnement :
 | `DISTROTHEQUE_MANUAL_JSON` | chemin des ajouts manuels |
 | `DISTROTHEQUE_OVERRIDES_JSON` | chemin des modifications de fiches |
 | `DISTROTHEQUE_DELETIONS_JSON` | chemin des fiches supprimées |
+| `DISTROTHEQUE_IMAGES_JSON` | chemin des métadonnées d'images |
+| `DISTROTHEQUE_UPLOADS_DIR` | dossier des fichiers images |
 | `DISTROTHEQUE_ADMIN_PASSWORD` | mot de passe pour `web/cli/admin.php set-password` |
 | `DISTROTHEQUE_HOST` / `DISTROTHEQUE_PORT` | écoute de `start.py` |
 | `DISTROTHEQUE_PHP` | binaire PHP utilisé par `start.py` |
@@ -743,6 +783,8 @@ Variables d'environnement :
 │   ├── manual_distros.json    # ajouts manuels (non versionné)
 │   ├── distro_overrides.json  # modifications de fiches (non versionné)
 │   ├── distro_deletions.json  # fiches supprimées / corbeille (non versionné)
+│   ├── distro_images.json     # métadonnées des images (non versionné)
+│   ├── uploads/               # images du carrousel (non versionné)
 │   ├── admin.json             # compte admin (hash, 0600, non versionné)
 │   ├── sessions/              # sessions PHP de l'administration
 │   └── backups/               # sauvegardes de distros.json

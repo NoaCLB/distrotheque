@@ -156,6 +156,23 @@ function format_number(int $value): string
     return number_format($value, 0, ',', ' ');
 }
 
+function format_bytes(int $bytes): string
+{
+    if ($bytes < 1024) {
+        return $bytes . ' o';
+    }
+
+    $units = ['Ko', 'Mo', 'Go'];
+    $value = $bytes / 1024;
+    $unit = 0;
+    while ($value >= 1024 && $unit < count($units) - 1) {
+        $value /= 1024;
+        $unit++;
+    }
+
+    return number_format($value, $value >= 10 ? 0 : 1, ',', ' ') . ' ' . $units[$unit];
+}
+
 function split_archs(string $value): array
 {
     return array_values(array_filter(array_map('trim', explode(',', $value)), static fn($item) => $item !== ''));

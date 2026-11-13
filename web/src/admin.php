@@ -233,6 +233,7 @@ function admin_handle_new(): void
         'values'    => $values,
         'errors'    => $errors,
         'slug'      => '',
+        'images'    => [],
     ]);
 }
 
@@ -279,6 +280,7 @@ function admin_handle_manual_edit(string $slug): void
         'values'    => $values,
         'errors'    => $errors,
         'slug'      => $slug,
+        'images'    => images_for_slug($slug),
     ]);
 }
 
@@ -327,7 +329,142 @@ function admin_handle_override_edit(array $distro): void
         'errors'    => $errors,
         'slug'      => $slug,
         'override'  => $override,
+        'images'    => images_for_slug($slug),
     ]);
+}
+
+function admin_image_mode(string $slug, string $mode): string
+{
+    if ($mode === 'manual' || $mode === 'override') {
+        return $mode;
+    }
+
+    $manual = manual_find($slug);
+    $distro = find_distro($slug);
+    if ($manual !== null && $distro !== null && (string) ($distro['source'] ?? '') === 'manual') {
+        return 'manual';
+    }
+
+    return 'override';
+}
+
+function admin_image_redirect(string $slug, string $mode): void
+{
+    admin_redirect('/admin/distros/edit', [
+        'slug' => $slug,
+        'mode' => admin_image_mode($slug, $mode),
+    ]);
+}
+
+function admin_handle_images_upload(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        http_response_code(405);
+        header('Allow: POST');
+        exit('Méthode non autorisée.');
+    }
+
+    if (empty($_POST) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+        admin_flash('error', 'L\'envoi dépasse la limite autorisée par le serveur. Réduis la taille des fichiers.');
+        admin_redirect('/admin/distros');
+    }
+
+    admin_csrf_check();
+
+    $slug = (string) ($_POST['slug'] ?? '');
+    if (!preg_match('/^[a-z0-9][a-z0-9-]{0,80}$/', $slug)) {
+        admin_not_found('Fiche introuvable.');
+    }
+
+    $distro = find_distro($slug);
+    if ($distro === null) {
+        admin_not_found('Aucune fiche ne correspond à « ' . $slug . ' ».');
+    }
+
+    $mode = admin_image_mode($slug, '');
+    $files = $_FILES['images'] ?? null;
+    if (!is_array($files) || !isset($files['name'])) {
+        admin_flash('warning', 'Aucun fichier reçu.');
+        admin_image_redirect($slug, $mode);
+    }
+
+    $names = $files['name'];
+    if (!is_array($names)) {
+        $names = [$names];
+    }
+
+    $added = 0;
+    $errors = [];
+    foreach (array_keys($names) as $index) {
+        $name = $files['name'][$index] ?? '';
+        $temporary = $files['tmp_name'][$index] ?? '';
+        $uploadError = $files['error'][$index] ?? UPLOAD_ERR_NO_FILE;
+        $size = $files['size'][$index] ?? 0;
+
+        if (!is_string($name) || !is_string($temporary) || !is_numeric($uploadError) || !is_numeric($size)) {
+            $errors[] = 'Fichier invalide.';
+            continue;
+        }
+
+        [$record, $error] = images_add_upload($slug, [
+            'name'     => $name,
+            'tmp_name' => $temporary,
+            'error'    => (int) $uploadError,
+            'size'     => (int) $size,
+        ]);
+        if ($record !== null) {
+            $added++;
+        } elseif ($error !== '') {
+            $errors[] = $error;
+        }
+    }
+
+    if ($added > 0) {
+        admin_flash('success', $added . ' image' . ($added > 1 ? 's ajoutées' : ' ajoutée') . ' à « ' . (string) $distro['name'] . ' ».');
+        admin_log('Ajout de ' . $added . ' image(s) à « ' . (string) $distro['name'] . ' » (slug ' . $slug . ')');
+    }
+
+    foreach (array_unique($errors) as $error) {
+        admin_flash('error', $error);
+    }
+
+    admin_image_redirect($slug, $mode);
+}
+
+function admin_handle_image_delete(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        http_response_code(405);
+        header('Allow: POST');
+        exit('Méthode non autorisée.');
+    }
+
+    admin_csrf_check();
+
+    $slug = (string) ($_POST['slug'] ?? '');
+    if (!preg_match('/^[a-z0-9][a-z0-9-]{0,80}$/', $slug)) {
+        admin_not_found('Fiche introuvable.');
+    }
+
+    $distro = find_distro($slug);
+    if ($distro === null) {
+        admin_not_found('Aucune fiche ne correspond à « ' . $slug . ' ».');
+    }
+
+    $file = (string) ($_POST['file'] ?? '');
+    if (!preg_match('/^[a-f0-9]{16}\.[a-z0-9]{1,8}$/', $file)) {
+        admin_not_found('Image introuvable.');
+    }
+
+    $mode = admin_image_mode($slug, '');
+    if (!images_delete($slug, $file)) {
+        admin_flash('warning', 'Cette image est introuvable.');
+    } else {
+        admin_flash('success', 'Image supprimée de « ' . (string) $distro['name'] . ' ».');
+        admin_log('Suppression d\'une image de « ' . (string) $distro['name'] . ' » (slug ' . $slug . ')');
+    }
+
+    admin_image_redirect($slug, $mode);
 }
 
 function admin_handle_edit(): void
@@ -408,6 +545,7 @@ function admin_handle_delete(): void
             admin_redirect('/admin/distros');
         }
         $message = '« ' . $name . ' » a été supprimée définitivement.';
+        images_purge($slug);
         admin_log('Suppression de l\'ajout manuel « ' . $name . ' » (slug ' . $slug . ')');
     } else {
         if (deletion_find_for_distro($distro) !== null) {
@@ -506,6 +644,12 @@ function admin_handle(string $route): void
             return;
         case '/admin/distros/edit':
             admin_handle_edit();
+            return;
+        case '/admin/distros/images':
+            admin_handle_images_upload();
+            return;
+        case '/admin/distros/images/delete':
+            admin_handle_image_delete();
             return;
         case '/admin/distros/reset':
             admin_handle_reset();
