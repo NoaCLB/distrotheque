@@ -179,8 +179,15 @@ def main() -> int:
     parser.add_argument(
         "--no-log", action="store_true", help="Ne pas écrire de fichier de log"
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="Téléchargements simultanés du scraper (défaut : 2, adapté aux petits serveurs)",
+    )
     args = parser.parse_args()
 
+    workers = max(1, int(args.workers))
     json_path = Path(args.json).resolve()
     db_path = Path(args.db).resolve()
 
@@ -199,8 +206,16 @@ def main() -> int:
 
         if not args.skip_scrape:
             backup_json(json_path, BACKUP_DIR, log)
+            log(f"Scraping avec {workers} worker(s) simultané(s).")
             run(
-                [PYTHON, str(SCRAPER), "-o", str(json_path)],
+                [
+                    PYTHON,
+                    str(SCRAPER),
+                    "-o",
+                    str(json_path),
+                    "--workers",
+                    str(workers),
+                ],
                 "Scraping",
                 log,
             )

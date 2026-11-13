@@ -499,6 +499,7 @@ En cas d'échec du scraping, **l'ancienne base reste en ligne**.
 | `--deletions` | fichier des fiches supprimées (défaut `data/distro_deletions.json`) |
 | `--no-lock` | ignorer le verrou |
 | `--no-log` | ne pas écrire de fichier de log |
+| `--workers` | téléchargements simultanés du scraper (défaut `2`, pour les serveurs à 1 Go de RAM) |
 
 Logs : `logs/update-AAAAAMMJJ-HHMMSS.log`.
 
@@ -570,6 +571,10 @@ Le service fourni tourne en `www-data`. Les options de sandboxing systemd
 activées : dans un conteneur LXC, elles échouent avec
 « Failed to set up mount namespacing » (`status 226/NAMESPACE`). Le service
 reste limité par l'utilisateur `www-data` et le verrou anti-concurrence.
+
+Sur un petit serveur (1 Go de RAM), `update.py` limite le scraper à **2
+téléchargements simultanés** par défaut (`--workers`) pour éviter l'OOM killer.
+Augmenter cette valeur si la machine a plus de mémoire.
 
 ## Production (nginx + PHP-FPM)
 
