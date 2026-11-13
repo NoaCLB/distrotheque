@@ -23,6 +23,7 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
 }
+MAX_FETCH_BYTES = 8 * 1024 * 1024
 OS_CATEGORIES = {"Linux", "BSD"}
 
 DOWNLOAD_FIELDS = (
@@ -108,7 +109,12 @@ def fetch(url, retries=4, timeout=30, headers=None):
             request = urllib.request.Request(url, headers=request_headers)
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
-                return response.read().decode(charset, errors="replace")
+                data = response.read(MAX_FETCH_BYTES + 1)
+                if len(data) > MAX_FETCH_BYTES:
+                    raise RuntimeError(
+                        f"Réponse trop volumineuse (>{MAX_FETCH_BYTES} octets) : {url}"
+                    )
+                return data.decode(charset, errors="replace")
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 raise NotFound(url)

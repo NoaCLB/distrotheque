@@ -579,7 +579,9 @@ pas saturer la machine. Augmenter `--workers` si la machine a plus de mémoire
 et de CPU.
 
 Le service systemd fourni force `--workers 4`, adapté à ce conteneur (4 Go,
-1 vCPU). Réduire à `1` si la machine est plus limitée.
+1 vCPU). Réduire à `1` si la machine est plus limitée. Le scraper refuse les
+réponses de plus de 8 Mo et `update.py` s'impose une limite mémoire (75 % du
+cgroup, plafonnée à 3 Go) pour ne jamais tuer nginx, PHP ou sshd.
 
 ### DNS dans un conteneur Proxmox
 

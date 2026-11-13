@@ -12,6 +12,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - Windows
+    resource = None
+
 ROOT = Path(__file__).resolve().parent
 SCRAPER = ROOT / "scrap" / "scrape_distros.py"
 BUILDER = ROOT / "builder" / "build_db.py"
@@ -144,6 +149,25 @@ def run(command: list[str], label: str, log) -> None:
         raise UpdateError(f"{label} a échoué (code {process.returncode}).")
     log(f"{label} terminé en {duration:.0f} s.")
 
+def apply_memory_limit() -> None:
+    """Garde une marge pour nginx/PHP/sshd même si le scraper dérape."""
+    if resource is None:
+        return
+
+    limit = 3 * 1024 * 1024 * 1024
+    try:
+        raw = Path("/sys/fs/cgroup/memory.max").read_text(encoding="utf-8").strip()
+        if raw.isdigit():
+            limit = max(512 * 1024 * 1024, int(raw) * 3 // 4)
+    except OSError:
+        pass
+    limit = min(limit, 3 * 1024 * 1024 * 1024)
+
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (OSError, ValueError):
+        pass
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Met à jour la Distrothèque.")
     parser.add_argument("--json", default=str(DEFAULT_JSON), help="Fichier JSON")
@@ -192,6 +216,7 @@ def main() -> int:
         os.nice(19)
     except OSError:
         pass
+    apply_memory_limit()
     json_path = Path(args.json).resolve()
     db_path = Path(args.db).resolve()
 
