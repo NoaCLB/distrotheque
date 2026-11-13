@@ -578,6 +578,9 @@ priorité basse (`nice 19`). Le service systemd ajoute `CPUQuota=50 %` pour ne
 pas saturer la machine. Augmenter `--workers` si la machine a plus de mémoire
 et de CPU.
 
+Le service systemd fourni force `--workers 4`, adapté à ce conteneur (4 Go,
+1 vCPU). Réduire à `1` si la machine est plus limitée.
+
 ### DNS dans un conteneur Proxmox
 
 Proxmox réécrit `/etc/resolv.conf` au démarrage du conteneur. Si les serveurs
