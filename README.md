@@ -565,9 +565,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now distrotheque-update.timer
 ```
 
-Le service fourni tourne en `www-data` et applique `ProtectSystem=strict` :
-seuls `data/`, `logs/` et `distros.json` sont montés accessibles en écriture.
-Le reste du projet est en lecture seule pendant la mise à jour.
+Le service fourni tourne en `www-data`. Les options de sandboxing systemd
+(`ProtectSystem`, `PrivateTmp`, `ReadWritePaths`…) ne sont volontairement pas
+activées : dans un conteneur LXC, elles échouent avec
+« Failed to set up mount namespacing » (`status 226/NAMESPACE`). Le service
+reste limité par l'utilisateur `www-data` et le verrou anti-concurrence.
 
 ## Production (nginx + PHP-FPM)
 

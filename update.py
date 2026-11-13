@@ -24,6 +24,10 @@ BACKUP_DIR = ROOT / "data" / "backups"
 LOG_DIR = ROOT / "logs"
 LOCK_FILE = ROOT / "data" / ".update.lock"
 
+# Dans certains contextes (notamment lancé par PHP), sys.executable peut être
+# vide : on retombe sur le python3 du système pour les sous-processus.
+PYTHON = sys.executable or shutil.which("python3") or "/usr/bin/python3"
+
 KEEP_BACKUPS = 8
 LOCK_MAX_AGE = 6 * 3600
 MIN_RATIO = 0.5
@@ -196,7 +200,7 @@ def main() -> int:
         if not args.skip_scrape:
             backup_json(json_path, BACKUP_DIR, log)
             run(
-                [sys.executable, str(SCRAPER), "-o", str(json_path)],
+                [PYTHON, str(SCRAPER), "-o", str(json_path)],
                 "Scraping",
                 log,
             )
@@ -237,7 +241,7 @@ def main() -> int:
 
         run(
             [
-                sys.executable,
+                PYTHON,
                 str(BUILDER),
                 "--json",
                 str(json_path),

@@ -14,18 +14,11 @@ Nice=10
 IOSchedulingClass=idle
 UMask=0027
 NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/var/www/distrotheque/data /var/www/distrotheque/logs
-ReadWritePaths=-/var/www/distrotheque/distros.json
 TimeoutStartSec=2h
+
+# Le serveur de production est un conteneur LXC : les options de sandboxing
+# systemd (ProtectSystem, PrivateTmp, ReadWritePaths…) y échouent avec
+# « Failed to set up mount namespacing » (status 226/NAMESPACE).
 
 [Install]
 WantedBy=multi-user.target
